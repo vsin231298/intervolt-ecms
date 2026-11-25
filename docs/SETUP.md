@@ -129,6 +129,7 @@ Administrators see the current link at the top of the **Dashboard**. The address
 
 - A backup runs automatically every night (database + uploaded files) into the `backups/` folder, keeping 14 days.
 - Run one now: `docker compose exec backup sh /backup.sh /backups /storage`
+- **Save backups straight into OneDrive (Windows):** add `BACKUP_DIR=C:/Users/<you>/OneDrive/Intervolt-Backups` to `.env`, then `docker compose up -d`. Only the backups go there; never put the live database in OneDrive.
 - **Off-site copy (free):** install `rclone` (`sudo apt install rclone`), run `rclone config` and add your Google Drive or OneDrive, then add a daily copy:
   ```bash
   crontab -e

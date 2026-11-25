@@ -40,7 +40,7 @@ export default async function ChangesPage({ params }: { params: Promise<{ id: st
         </div>
       ) : null}
 
-      <Card title="Change orders" bodyClass="overflow-x-auto" actions={live && can(r, "change.edit") ? (
+      <Card title="Change orders (ESI / extra work pricing)" bodyClass="overflow-x-auto" actions={live && can(r, "change.edit") ? (
         <Drawer label="New change order" className="btn btn-primary btn-sm" wide>
           <ActionForm action={createCoAction} className="space-y-3">
             <input type="hidden" name="projectId" value={id} />
@@ -124,7 +124,7 @@ export default async function ChangesPage({ params }: { params: Promise<{ id: st
                                   <Field label="Received *"><input type="datetime-local" name="respondedAt" required defaultValue={isoDateTimeLocal(new Date())} className="input" /></Field>
                                   <Field label="From"><input name="respondedBy" className="input" /></Field>
                                 </div>
-                                <Field label="Change required? *"><select name="changeRequired" className="input"><option value="no">No: close the RFI</option><option value="yes">Yes: open a draft change order</option></select></Field>
+                                <Field label="Change required? *"><select name="changeRequired" className="input"><option value="no">No: close the RFI</option><option value="yes">Change needed: create an ESI and draft its pricing</option></select></Field>
                                 <Field label="Response document"><input type="file" name="files" className="text-sm" /></Field>
                                 <Submit>Save response</Submit>
                               </ActionForm>

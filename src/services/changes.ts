@@ -61,11 +61,15 @@ export async function recordRfiResponse(actor: Actor, rfiId: string, input: z.in
     const changeRequired = input.changeRequired === "yes";
     await t.rfi.update({ where: { id: rfiId }, data: { response: input.response, respondedAt: input.respondedAt, respondedBy: input.respondedBy, changeRequired, status: changeRequired ? "ANSWERED" : "CLOSED", sentAt: r.sentAt ?? input.respondedAt } });
     let coId: string | null = null;
+    let esiNumber: string | null = null;
     if (changeRequired) {
-      const co = await createChangeOrderTx(t, actor, r.projectId, { title: `Change from ${r.number}: ${r.subject}`.slice(0, 300), description: input.response, reason: `Consultant response to ${r.number}`, rfiId: r.id });
+      // Workflow: RFI → Change needed → ESI → Intervolt estimates the ESI (draft change order) → submit to client.
+      esiNumber = await nextProjectNumber(t, r.projectId, r.project.number, "ESI");
+      const esi = await t.esi.create({ data: { projectId: r.projectId, number: esiNumber, issuedBy: input.respondedBy, receivedAt: input.respondedAt, description: `From ${r.number} (${r.subject}): ${input.response}`, changeRequired: true, status: "ACTIONED" } });
+      const co = await createChangeOrderTx(t, actor, r.projectId, { title: `ESI ${esiNumber}: ${r.subject}`.slice(0, 300), description: input.response, reason: `Change needed per ${r.number} response`, rfiId: r.id, esiId: esi.id });
       coId = co.id;
     }
-    await audit(t, actor, { action: "rfi.respond", entityType: "Rfi", entityId: rfiId, projectId: r.projectId, summary: `${r.number}: response recorded — ${changeRequired ? "change required (draft change order created)" : "no change"}` });
+    await audit(t, actor, { action: "rfi.respond", entityType: "Rfi", entityId: rfiId, projectId: r.projectId, summary: `${r.number}: response recorded — ${changeRequired ? `change needed (ESI ${esiNumber} created, pricing drafted)` : "no change"}` });
     return { changeOrderId: coId };
   });
 }

@@ -96,7 +96,7 @@ export default async function InfoPage({ params }: { params: Promise<{ id: strin
           <Card title="Tender review decisions">
             <ul className="space-y-2 text-sm">
               {p.reviews.map((r) => (
-                <li key={r.id}><b>{r.decision === "DOABLE" ? "Doable" : "Not doable"}</b> — {reviewers.find((u) => u.id === r.reviewerId)?.name} · {fmtDate(r.decidedAt)}{r.reason ? <div className="text-slate-600">{r.reason}</div> : null}</li>
+                <li key={r.id}><b>{r.decision === "DOABLE" ? "Doable" : "Not bidding"}</b> — {reviewers.find((u) => u.id === r.reviewerId)?.name} · {fmtDate(r.decidedAt)}{r.reason ? <div className="text-slate-600">{r.reason}</div> : null}</li>
               ))}
             </ul>
           </Card>

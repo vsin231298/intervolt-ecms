@@ -244,6 +244,9 @@ describe("Scenario 3: full project lifecycle, tender to closeout", () => {
     await changes.addCoLine(pm, changeOrderId!, { category: "MATERIAL", description: "EMT 3/4 conduit", quantity: 200, unit: "ft", unitPrice: 2.5, labourHoursPerUnit: 0.05 });
     await changes.addCoLine(pm, changeOrderId!, { category: "LABOUR", description: "Rework", quantity: 16, unit: "hr", unitPrice: 0, labourHoursPerUnit: 0 });
     const co = await prisma.changeOrder.findUniqueOrThrow({ where: { id: changeOrderId! } });
+    // Diagram: RFI change needed → ESI → Intervolt estimates the ESI
+    expect(co.esiId).toBeTruthy();
+    expect((await prisma.esi.findUniqueOrThrow({ where: { id: co.esiId! } })).changeRequired).toBe(true);
     // material 500, hours 10+16=26 × 95 = 2470, direct 2970, +15% = 3415.50
     expect(d(co.proposedAmount).toNumber()).toBe(3415.5);
     await changes.submitChangeOrder(pm, co.id);

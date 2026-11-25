@@ -157,12 +157,12 @@ export default async function JobOverview({ params }: { params: Promise<{ id: st
               <ActionForm action={reviewDecisionAction} className="space-y-3 rounded-md border border-red-200 bg-red-50/40 p-3">
                 <input type="hidden" name="projectId" value={id} />
                 <input type="hidden" name="decision" value="NOT_DOABLE" />
-                <div className="text-sm font-semibold text-red-800">Not doable: close the lead</div>
+                <div className="text-sm font-semibold text-red-800">Not bidding: close the lead</div>
                 <Field label="Reason *"><textarea name="reason" required rows={3} className="input" /></Field>
-                <Submit className="btn btn-danger">Not doable — close</Submit>
+                <Submit className="btn btn-danger">Not bidding — close</Submit>
               </ActionForm>
             </div>
-          ) : <Notice>Waiting for a Project Manager or Administrator to make the Doable / Not doable decision.</Notice>}
+          ) : <Notice>Waiting for a Project Manager or Administrator to make the Doable / Not bidding decision.</Notice>}
         </div>
       );
     }

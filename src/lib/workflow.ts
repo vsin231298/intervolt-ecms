@@ -18,7 +18,7 @@ export const STAGE_LABELS: Record<ProjectStage, string> = {
 };
 
 export const CLOSE_REASON_LABELS: Record<CloseReason, string> = {
-  NOT_DOABLE: "Not doable",
+  NOT_DOABLE: "Not bidding",
   LOST_BID: "Lost bid",
   COMPLETED: "Completed",
   CANCELLED: "Cancelled",

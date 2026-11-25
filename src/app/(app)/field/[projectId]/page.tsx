@@ -1,0 +1,140 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { MapPin, Navigation, Phone, FileText } from "lucide-react";
+import { requireUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { fmtDateTime, isoDate, today } from "@/lib/dates";
+import { qty } from "@/lib/money";
+import { Badge, Card, Field, Notice, Options } from "@/components/ui";
+import { ActionForm, Submit } from "@/components/ActionForm";
+import { ClockForm, SignaturePad } from "@/components/FieldClient";
+import { assertFieldAccess, workerForUser } from "@/services/labour";
+import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction } from "@/app/actions/labour";
+import { usageAction } from "@/app/actions/procurement";
+
+export default async function FieldJob({ params }: { params: Promise<{ projectId: string }> }) {
+  const user = await requireUser("field.use");
+  const { projectId } = await params;
+  try {
+    await assertFieldAccess(user, projectId);
+  } catch {
+    redirect("/field");
+  }
+  const worker = await workerForUser(user.id);
+  const [p, open, docs, materials, updates, deficiencies] = await Promise.all([
+    prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { client: true, projectManager: true } }),
+    worker ? prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } }) : null,
+    prisma.document.findMany({
+      where: { projectId, OR: [{ module: { in: ["SHOP_DRAWING", "TENDER", "CONTRACT", "GENERAL"] } }, { category: { in: ["Drawings", "Drawing", "Specification", "Scope", "Shop drawing"] } }], versions: { some: {} } },
+      include: { versions: { orderBy: { revision: "desc" }, take: 3 } },
+      orderBy: { updatedAt: "desc" },
+      take: 40,
+    }),
+    prisma.materialItem.findMany({ where: { projectId }, orderBy: { description: "asc" } }),
+    prisma.fieldUpdate.findMany({ where: { projectId, authorId: user.id }, orderBy: { createdAt: "desc" }, take: 5 }),
+    prisma.deficiency.findMany({ where: { projectId, status: { not: "COMPLETED" } }, orderBy: { dueDate: "asc" } }),
+  ]);
+  const here = open?.projectId === projectId;
+  const mapUrl = p.location ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.location)}` : null;
+  // Prefer the approved revision; otherwise the latest.
+  const drawingRows = docs.map((d) => ({ d, v: d.versions.find((v) => v.approvalStatus === "APPROVED") ?? d.versions[0] }));
+
+  return (
+    <div className="mx-auto max-w-lg space-y-4 pb-10">
+      <div>
+        <Link href="/field" className="link text-sm">← My jobs</Link>
+        <div className="mt-1 font-mono text-xs text-slate-500">{p.number}</div>
+        <h1 className="text-xl font-semibold">{p.name}</h1>
+        {p.client ? <div className="text-sm text-slate-600">{p.client.name}</div> : null}
+      </div>
+
+      <Card>
+        <div className="space-y-2 text-sm">
+          {p.location ? <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 text-slate-400" />{p.location}</div> : <div className="text-slate-500">No site address on file.</div>}
+          {p.siteContactName ? <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-slate-400" />{p.siteContactName}{p.siteContactPhone ? <a className="link" href={`tel:${p.siteContactPhone}`}>{p.siteContactPhone}</a> : null}</div> : null}
+          {p.projectManager ? <div className="text-xs text-slate-500">PM: {p.projectManager.name}</div> : null}
+          {mapUrl ? <a href={mapUrl} target="_blank" rel="noreferrer" className="btn btn-secondary w-full"><Navigation className="h-4 w-4" /> Navigate to site</a> : null}
+        </div>
+      </Card>
+
+      <Card>
+        {!worker ? <Notice tone="amber">Your login isn&apos;t linked to an employee profile, so you can&apos;t clock in.</Notice>
+          : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
+          : open ? <Notice tone="amber">You&apos;re clocked in on {open.project.number}. <Link className="link" href={`/field/${open.projectId}`}>Go there to clock out</Link>.</Notice>
+          : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" />}
+      </Card>
+
+      <Card title="Scope & drawings">
+        {p.scope || p.description ? <p className="mb-3 whitespace-pre-line text-sm">{p.scope ?? p.description}</p> : null}
+        {drawingRows.length === 0 ? <p className="text-sm text-slate-500">No drawings uploaded.</p> : (
+          <ul className="space-y-2 text-sm">
+            {drawingRows.map(({ d, v }) => (
+              <li key={d.id} className="flex items-center gap-2">
+                <FileText className="h-4 w-4 shrink-0 text-slate-400" />
+                <a className="link min-w-0 flex-1 truncate" href={`/api/files/${v.id}?inline=1`} target="_blank" rel="noreferrer">{d.title}</a>
+                {v.approvalStatus === "APPROVED" ? <Badge tone="green">Approved</Badge> : <Badge>rev {v.revision}</Badge>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {deficiencies.length ? (
+        <Card title="Open deficiencies">
+          <ul className="space-y-1 text-sm">{deficiencies.map((x) => <li key={x.id}>• {x.description}{x.location ? <span className="text-slate-500"> ({x.location})</span> : null}</li>)}</ul>
+        </Card>
+      ) : null}
+
+      <Card title="Upload photos">
+        <ActionForm action={photosAction} className="space-y-2">
+          <input type="hidden" name="projectId" value={p.id} />
+          <input type="file" name="photos" accept="image/*" capture="environment" multiple required className="block w-full text-sm" aria-label="Photos" />
+          <input name="message" placeholder="Caption (optional)" className="input" />
+          <Submit className="btn btn-primary w-full">Upload photos</Submit>
+        </ActionForm>
+      </Card>
+
+      <Card title="Log material used">
+        <ActionForm action={usageAction} className="space-y-2">
+          <input type="hidden" name="projectId" value={p.id} />
+          <select name="materialItemId" className="input" aria-label="Material"><Options items={materials.map((m) => ({ value: m.id, label: `${m.description} (${m.unit})` }))} empty="Other (type below)" /></select>
+          <input name="description" placeholder="Description, if not in the list" className="input" />
+          <div className="grid grid-cols-3 gap-2">
+            <input name="quantity" required inputMode="decimal" placeholder="Qty" className="input" aria-label="Quantity" />
+            <input name="unit" placeholder="Unit" className="input" aria-label="Unit" />
+            <input type="date" name="usedOn" required defaultValue={isoDate(today())} className="input" aria-label="Date" />
+          </div>
+          <input name="note" placeholder="Note (optional)" className="input" />
+          <Submit className="btn btn-primary w-full">Log material</Submit>
+        </ActionForm>
+      </Card>
+
+      <Card title="Send update to PM / report issue">
+        <ActionForm action={fieldUpdateAction} className="space-y-2">
+          <input type="hidden" name="projectId" value={p.id} />
+          <div className="flex gap-4 text-sm">
+            <label className="flex items-center gap-1.5"><input type="radio" name="kind" value="UPDATE" defaultChecked /> Update</label>
+            <label className="flex items-center gap-1.5"><input type="radio" name="kind" value="ISSUE" /> Issue / problem</label>
+          </div>
+          <textarea name="message" required rows={3} placeholder="What's happening on site?" className="input" />
+          <input type="file" name="photos" accept="image/*" capture="environment" multiple className="block w-full text-sm" aria-label="Photos" />
+          <Submit className="btn btn-primary w-full">Send</Submit>
+        </ActionForm>
+        {updates.length ? <ul className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-500">{updates.map((u) => <li key={u.id}>{fmtDateTime(u.createdAt)} · {u.kind === "ISSUE" ? (u.resolvedAt ? "issue (resolved)" : "issue") : "update"}: {u.message.slice(0, 80)}</li>)}</ul> : null}
+      </Card>
+
+      <Card title="Complete work order / customer sign-off">
+        <ActionForm action={signoffAction} className="space-y-3">
+          <input type="hidden" name="projectId" value={p.id} />
+          <Field label="Work performed *"><textarea name="workSummary" required rows={3} className="input" /></Field>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="markedComplete" /> Work order is complete</label>
+          <Field label="Customer name (if signing)"><input name="customerName" className="input" /></Field>
+          <SignaturePad name="signatureDataUrl" />
+          <Submit className="btn btn-success w-full">Save</Submit>
+        </ActionForm>
+      </Card>
+
+      {materials.length ? <p className="text-center text-xs text-slate-400">{materials.length} items on this job&apos;s material list · {qty(materials.reduce((s, m) => s + Number(m.quantityRequired), 0))} units total</p> : null}
+    </div>
+  );
+}

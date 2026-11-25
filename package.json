@@ -1,0 +1,52 @@
+{
+  "name": "intervolt-ecms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Intervolt Electric - Electrical Contracting Management System",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:setup": "tsx scripts/setup.ts",
+    "jobs": "tsx scripts/run-jobs.ts",
+    "test": "vitest run",
+    "backup": "bash scripts/backup.sh",
+    "demo": "tsx scripts/demo-data.ts"
+  },
+  "prisma": {
+    "seed": "tsx scripts/setup.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1177.0",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
+    "lucide-react": "^1.80.0",
+    "next": "^15.5.29",
+    "pdfkit": "^0.21.0",
+    "react": "^19.1.10",
+    "react-dom": "^19.1.10",
+    "recharts": "^3.11.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.20.7",
+    "@types/pdfkit": "^0.17.7",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "postcss": "^8.5.33",
+    "prisma": "^6.19.3",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.2"
+  }
+}

@@ -1,0 +1,1423 @@
+// Intervolt Electric - Electrical Contracting Management System
+// One Project record runs from tender invitation to closeout.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  ADMIN
+  PROJECT_MANAGER
+  ESTIMATOR
+  PROCUREMENT
+  ACCOUNTING
+  SITE_SUPERVISOR
+  ELECTRICIAN
+  READ_ONLY
+}
+
+enum ProjectStage {
+  OPPORTUNITY
+  UNDER_REVIEW
+  ESTIMATING
+  QUOTING
+  READY_TO_SUBMIT
+  SUBMITTED
+  ACTIVATION
+  EXECUTION
+  CLOSEOUT
+  CLOSED
+}
+
+enum CloseReason {
+  NOT_DOABLE
+  LOST_BID
+  COMPLETED
+  CANCELLED
+}
+
+enum OrgType {
+  CLIENT
+  CONSULTANT
+  GENERAL_CONTRACTOR
+  SUPPLIER
+  SUBCONTRACTOR
+  INSPECTOR
+  OTHER
+}
+
+enum ReviewDecision {
+  DOABLE
+  NOT_DOABLE
+}
+
+enum EstimateStatus {
+  DRAFT
+  FINAL
+  SUPERSEDED
+}
+
+enum LineCategory {
+  MATERIAL
+  LABOUR
+  EQUIPMENT
+  SUBCONTRACT
+}
+
+enum RfqSupplierStatus {
+  PENDING
+  RECEIVED
+  DECLINED
+}
+
+enum SubmissionOutcome {
+  PENDING
+  AWARDED
+  NOT_AWARDED
+}
+
+enum ShopDrawingStatus {
+  IN_PREPARATION
+  INTERNAL_REVIEW
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  APPROVED_AS_NOTED
+  REVISE_AND_RESUBMIT
+}
+
+enum POStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum RfiStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum ChangeStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum DrawStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  INVOICED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum InspectionResult {
+  SCHEDULED
+  PASSED
+  FAILED
+  CANCELLED
+}
+
+enum DeficiencyStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum CloseoutStatus {
+  OPEN
+  COMPLETE
+  WAIVED
+}
+
+enum ApprovalStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ScheduleStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum CommissioningResult {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum JobType {
+  PROJECT
+  SMALL_JOB
+  SERVICE
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+enum MaterialStatus {
+  REQUIRED
+  ORDERED
+  RECEIVED
+  CANCELLED
+  INVOICED
+}
+
+enum MaterialRequestStatus {
+  REQUESTED
+  ORDERED
+  CANCELLED
+}
+
+enum MatchStatus {
+  NOT_CHECKED
+  MATCHED
+  VARIANCE
+}
+
+enum FieldUpdateKind {
+  UPDATE
+  ISSUE
+}
+
+enum SupplierInvoiceStatus {
+  RECEIVED
+  APPROVED
+  PAID
+  DISPUTED
+}
+
+// ───────────────────────── Security & core ─────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         Role
+  active       Boolean   @default(true)
+  phone        String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions        Session[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  estimatorOn     Project[]               @relation("ProjectEstimator")
+  managerOn       Project[]               @relation("ProjectManager")
+  memberships     ProjectMember[]
+  worker          Worker?
+  docVersions     DocumentVersion[]
+  tasksAssigned   Task[]                  @relation("TaskAssignee")
+  eventsCreated   CalendarEvent[]         @relation("EventCreator")
+  eventAttendance CalendarEventAttendee[]
+  fieldUpdates    FieldUpdate[]
+}
+
+model Session {
+  id        String   @id // sha256 of the cookie token
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ip        String?
+  userAgent String?
+
+  @@index([userId])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ip        String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+}
+
+/// Append-only. Protected by a database trigger (see migration).
+model AuditLog {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  projectId  String?
+  summary    String
+  before     Json?
+  after      Json?
+
+  @@index([projectId, at])
+  @@index([entityType, entityId])
+  @@index([at])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Counter {
+  key   String @id
+  value Int
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  type      OrgType
+  email     String?
+  phone     String?
+  address   String?
+  website   String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts           Contact[]
+  clientProjects     Project[]              @relation("ProjectClient")
+  consultantProjects Project[]              @relation("ProjectConsultant")
+  gcProjects         Project[]              @relation("ProjectGC")
+  rfqSuppliers       QuoteRequestSupplier[]
+  supplierQuotes     SupplierQuote[]
+  purchaseOrders     PurchaseOrder[]
+  supplierInvoices   SupplierInvoice[]
+
+  @@index([type, name])
+}
+
+model Contact {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  title          String?
+  email          String?
+  phone          String?
+  createdAt      DateTime     @default(now())
+}
+
+// ───────────────────────── Project spine ─────────────────────────
+
+model Project {
+  id                 String        @id @default(cuid())
+  /// Work Order Number: assigned at creation (tender stage) and kept for the whole lifecycle.
+  number             String        @unique
+  jobType            JobType       @default(PROJECT)
+  scope              String?
+  siteContactName    String?
+  siteContactPhone   String?
+  name               String
+  description        String?
+  location           String?
+  clientId           String?
+  client             Organization? @relation("ProjectClient", fields: [clientId], references: [id])
+  consultantId       String?
+  consultant         Organization? @relation("ProjectConsultant", fields: [consultantId], references: [id])
+  gcId               String?
+  gc                 Organization? @relation("ProjectGC", fields: [gcId], references: [id])
+  clientProjectNo    String?
+  estimatedValue     Decimal?      @db.Decimal(14, 2)
+  invitationDate     DateTime?     @db.Date
+  submissionDeadline DateTime?
+  siteVisitDate      DateTime?
+  stage              ProjectStage  @default(OPPORTUNITY)
+  closeReason        CloseReason?
+  closeNote          String?
+  closedAt           DateTime?
+  estimatorId        String?
+  estimator          User?         @relation("ProjectEstimator", fields: [estimatorId], references: [id])
+  projectManagerId   String?
+  projectManager     User?         @relation("ProjectManager", fields: [projectManagerId], references: [id])
+  startDate          DateTime?     @db.Date
+  finishDate         DateTime?     @db.Date
+  holdbackPercent    Decimal       @default(10) @db.Decimal(5, 2)
+  awardedAt          DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  stageHistory      StageHistory[]
+  reviews           TenderReview[]
+  communications    Communication[]
+  members           ProjectMember[]
+  folders           DocumentFolder[]
+  documents         Document[]
+  estimates         Estimate[]
+  quoteRequests     QuoteRequest[]
+  submissions       TenderSubmission[]
+  contract          Contract?
+  clientPOs         ClientPO[]
+  scheduleItems     ScheduleItem[]
+  shopDrawings      ShopDrawing[]
+  purchaseOrders    PurchaseOrder[]
+  materialItems     MaterialItem[]
+  labourAssignments LabourAssignment[]
+  timeEntries       TimeEntry[]
+  dailyReports      DailyReport[]
+  rfis              Rfi[]
+  esis              Esi[]
+  changeOrders      ChangeOrder[]
+  billingLines      BillingLine[]
+  draws             ProgressDraw[]
+  invoices          Invoice[]
+  supplierInvoices  SupplierInvoice[]
+  inspections       Inspection[]
+  deficiencies      Deficiency[]
+  commissioning     CommissioningItem[]
+  closeoutItems     CloseoutItem[]
+  tasks             Task[]
+  events            CalendarEvent[]
+  materialRequests  MaterialRequest[]
+  materialUsage     MaterialUsage[]
+  clockEntries      ClockEntry[]
+  fieldUpdates      FieldUpdate[]
+  signoffs          WorkOrderSignoff[]
+
+  @@index([stage])
+  @@index([submissionDeadline])
+}
+
+model StageHistory {
+  id        String        @id @default(cuid())
+  projectId String
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromStage ProjectStage?
+  toStage   ProjectStage
+  note      String?
+  byId      String?
+  at        DateTime      @default(now())
+
+  @@index([projectId, at])
+}
+
+model TenderReview {
+  id         String         @id @default(cuid())
+  projectId  String
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  decision   ReviewDecision
+  reason     String?
+  reviewerId String
+  decidedAt  DateTime       @default(now())
+}
+
+model Communication {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind        String // Email, Phone, Meeting, Addendum, Clarification, Other
+  date        DateTime
+  subject     String
+  fromParty   String?
+  toParty     String?
+  summary     String?
+  createdById String?
+  createdAt   DateTime @default(now())
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  roleLabel String // e.g. "Site Supervisor", "Lead Hand"
+
+  @@unique([projectId, userId])
+}
+
+// ───────────────────────── Documents ─────────────────────────
+
+model DocumentFolder {
+  id        String     @id @default(cuid())
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int        @default(0)
+  documents Document[]
+
+  @@unique([projectId, name])
+}
+
+model Document {
+  id         String            @id @default(cuid())
+  projectId  String?
+  project    Project?          @relation(fields: [projectId], references: [id])
+  folderId   String?
+  folder     DocumentFolder?   @relation(fields: [folderId], references: [id])
+  module     String // TENDER, ESTIMATE, QUOTE, SUBMISSION, CONTRACT, SHOP_DRAWING, PROCUREMENT, SITE, RFI, CHANGE, BILLING, INSPECTION, COMMISSIONING, CLOSEOUT, GENERAL
+  category   String
+  title      String
+  entityType String?
+  entityId   String?
+  workerId   String?
+  worker     Worker?           @relation(fields: [workerId], references: [id])
+  expiresAt  DateTime?         @db.Date
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  versions   DocumentVersion[]
+
+  @@index([projectId, module])
+  @@index([entityType, entityId])
+}
+
+model DocumentVersion {
+  id             String         @id @default(cuid())
+  documentId     String
+  document       Document       @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  revision       Int
+  revisionLabel  String?
+  storageKey     String         @unique
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  sha256         String
+  note           String?
+  approvalStatus ApprovalStatus @default(NONE)
+  approvedAt     DateTime?
+  uploadedById   String
+  uploadedBy     User           @relation(fields: [uploadedById], references: [id])
+  uploadedAt     DateTime       @default(now())
+
+  @@unique([documentId, revision])
+}
+
+// ───────────────────────── Estimating & quotes ─────────────────────────
+
+model Estimate {
+  id               String         @id @default(cuid())
+  projectId        String
+  project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revision         Int
+  title            String
+  status           EstimateStatus @default(DRAFT)
+  labourRate       Decimal        @db.Decimal(10, 2)
+  overheadPercent  Decimal        @db.Decimal(5, 2)
+  profitPercent    Decimal        @db.Decimal(5, 2)
+  notes            String?
+  basedOnId        String?
+  // Totals are recalculated by the server on every line change.
+  materialTotal    Decimal        @default(0) @db.Decimal(14, 2)
+  labourHours      Decimal        @default(0) @db.Decimal(12, 2)
+  labourTotal      Decimal        @default(0) @db.Decimal(14, 2)
+  equipmentTotal   Decimal        @default(0) @db.Decimal(14, 2)
+  subcontractTotal Decimal        @default(0) @db.Decimal(14, 2)
+  directCost       Decimal        @default(0) @db.Decimal(14, 2)
+  overheadAmount   Decimal        @default(0) @db.Decimal(14, 2)
+  profitAmount     Decimal        @default(0) @db.Decimal(14, 2)
+  sellPrice        Decimal        @default(0) @db.Decimal(14, 2)
+  finalizedAt      DateTime?
+  finalizedById    String?
+  createdById      String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  lines         EstimateLine[]
+  quoteRequests QuoteRequest[]
+  submissions   TenderSubmission[]
+
+  @@unique([projectId, revision])
+}
+
+model EstimateLine {
+  id                  String       @id @default(cuid())
+  estimateId          String
+  estimate            Estimate     @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  sortOrder           Int          @default(0)
+  category            LineCategory
+  section             String?
+  description         String
+  manufacturer        String?
+  model               String?
+  quantity            Decimal      @db.Decimal(12, 2)
+  unit                String       @default("ea")
+  unitPrice           Decimal      @default(0) @db.Decimal(12, 2)
+  labourHoursPerUnit  Decimal      @default(0) @db.Decimal(10, 3)
+  supplierQuoteLineId String?
+  materialTotal       Decimal      @default(0) @db.Decimal(14, 2)
+  labourHours         Decimal      @default(0) @db.Decimal(12, 2)
+
+  rfqItems      QuoteRequestItem[]
+  materialItems MaterialItem[]
+}
+
+model QuoteRequest {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  estimateId  String?
+  estimate    Estimate? @relation(fields: [estimateId], references: [id])
+  number      String
+  title       String
+  dueDate     DateTime? @db.Date
+  notes       String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  items     QuoteRequestItem[]
+  suppliers QuoteRequestSupplier[]
+  quotes    SupplierQuote[]
+
+  @@unique([projectId, number])
+}
+
+model QuoteRequestItem {
+  id                  String             @id @default(cuid())
+  quoteRequestId      String
+  quoteRequest        QuoteRequest       @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  estimateLineId      String?
+  estimateLine        EstimateLine?      @relation(fields: [estimateLineId], references: [id], onDelete: SetNull)
+  description         String
+  manufacturer        String?
+  model               String?
+  quantity            Decimal            @db.Decimal(12, 2)
+  unit                String
+  selectedQuoteLineId String?            @unique
+  selectedQuoteLine   SupplierQuoteLine? @relation("SelectedLine", fields: [selectedQuoteLineId], references: [id], onDelete: SetNull)
+
+  quoteLines SupplierQuoteLine[]
+}
+
+model QuoteRequestSupplier {
+  id             String            @id @default(cuid())
+  quoteRequestId String
+  quoteRequest   QuoteRequest      @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  supplierId     String
+  supplier       Organization      @relation(fields: [supplierId], references: [id])
+  sentAt         DateTime?
+  followUpDate   DateTime?         @db.Date
+  lastFollowUpAt DateTime?
+  status         RfqSupplierStatus @default(PENDING)
+  notes          String?
+
+  @@unique([quoteRequestId, supplierId])
+}
+
+model SupplierQuote {
+  id             String       @id @default(cuid())
+  quoteRequestId String
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  supplierId     String
+  supplier       Organization @relation(fields: [supplierId], references: [id])
+  quoteNumber    String
+  quoteDate      DateTime     @db.Date
+  validUntil     DateTime?    @db.Date
+  leadTimeDays   Int?
+  freight        Decimal      @default(0) @db.Decimal(12, 2)
+  notes          String?
+  total          Decimal      @default(0) @db.Decimal(14, 2)
+  createdAt      DateTime     @default(now())
+
+  lines          SupplierQuoteLine[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model SupplierQuoteLine {
+  id              String            @id @default(cuid())
+  supplierQuoteId String
+  supplierQuote   SupplierQuote     @relation(fields: [supplierQuoteId], references: [id], onDelete: Cascade)
+  rfqItemId       String
+  rfqItem         QuoteRequestItem  @relation(fields: [rfqItemId], references: [id], onDelete: Cascade)
+  unitPrice       Decimal           @db.Decimal(12, 2)
+  leadTimeDays    Int?
+  note            String?
+  selectedFor     QuoteRequestItem? @relation("SelectedLine")
+
+  @@unique([supplierQuoteId, rfqItemId])
+}
+
+// ───────────────────────── Submission & award ─────────────────────────
+
+model TenderSubmission {
+  id                String            @id @default(cuid())
+  projectId         String
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  estimateId        String
+  estimate          Estimate          @relation(fields: [estimateId], references: [id])
+  finalPrice        Decimal           @db.Decimal(14, 2)
+  priceApprovedById String?
+  priceApprovedAt   DateTime?
+  submittedAt       DateTime?
+  submittedAmount   Decimal?          @db.Decimal(14, 2)
+  submissionMethod  String?
+  outcome           SubmissionOutcome @default(PENDING)
+  outcomeDate       DateTime?
+  outcomeReason     String?
+  winningAmount     Decimal?          @db.Decimal(14, 2)
+  notes             String?
+  createdAt         DateTime          @default(now())
+}
+
+model Contract {
+  id                String    @id @default(cuid())
+  projectId         String    @unique
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Locked by database trigger once written.
+  originalValue     Decimal   @db.Decimal(14, 2)
+  currentValue      Decimal   @db.Decimal(14, 2)
+  clientPoNumber    String
+  poDate            DateTime? @db.Date
+  awardedEstimateId String?
+  createdAt         DateTime  @default(now())
+
+  changes ContractValueChange[]
+}
+
+/// Append-only ledger of every change to the contract value.
+model ContractValueChange {
+  id            String       @id @default(cuid())
+  contractId    String
+  contract      Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  changeOrderId String?      @unique
+  changeOrder   ChangeOrder? @relation(fields: [changeOrderId], references: [id])
+  amount        Decimal      @db.Decimal(14, 2)
+  previousValue Decimal      @db.Decimal(14, 2)
+  newValue      Decimal      @db.Decimal(14, 2)
+  reason        String
+  byId          String?
+  at            DateTime     @default(now())
+}
+
+model ClientPO {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  poNumber    String
+  poDate      DateTime? @db.Date
+  amount      Decimal   @db.Decimal(14, 2)
+  description String?
+  createdAt   DateTime  @default(now())
+  invoices    Invoice[]
+
+  @@unique([projectId, poNumber])
+}
+
+model ScheduleItem {
+  id          String         @id @default(cuid())
+  projectId   String
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  startDate   DateTime?      @db.Date
+  endDate     DateTime?      @db.Date
+  status      ScheduleStatus @default(NOT_STARTED)
+  sortOrder   Int            @default(0)
+  isMilestone Boolean        @default(false)
+}
+
+// ───────────────────────── Shop drawings ─────────────────────────
+
+model ShopDrawing {
+  id              String         @id @default(cuid())
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number          String
+  title           String
+  specSection     String?
+  /// Supplier shop drawings must be approved before the linked PO can be received.
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplierId      String?
+  createdAt       DateTime       @default(now())
+
+  revisions ShopDrawingRevision[]
+
+  @@unique([projectId, number])
+}
+
+model ShopDrawingRevision {
+  id                  String            @id @default(cuid())
+  shopDrawingId       String
+  shopDrawing         ShopDrawing       @relation(fields: [shopDrawingId], references: [id], onDelete: Cascade)
+  revision            Int
+  status              ShopDrawingStatus @default(IN_PREPARATION)
+  preparedById        String?
+  internalReviewAt    DateTime?
+  internalReviewById  String?
+  internalReviewNotes String?
+  submittedAt         DateTime?
+  requiredBy          DateTime?         @db.Date
+  returnedAt          DateTime?
+  consultantComments  String?
+  approvedAt          DateTime?
+  documentId          String?
+  createdAt           DateTime          @default(now())
+
+  @@unique([shopDrawingId, revision])
+}
+
+// ───────────────────────── Procurement & materials ─────────────────────────
+
+model MaterialItem {
+  id               String          @id @default(cuid())
+  projectId        String
+  project          Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  estimateLineId   String?
+  estimateLine     EstimateLine?   @relation(fields: [estimateLineId], references: [id], onDelete: SetNull)
+  description      String
+  manufacturer     String?
+  model            String?
+  unit             String
+  quantityRequired Decimal         @db.Decimal(12, 2)
+  budgetUnitCost   Decimal         @default(0) @db.Decimal(12, 2)
+  /// Manually entered materials (not via PO) carry their own supplier / status.
+  isManual         Boolean         @default(false)
+  supplierId       String?
+  orderedByName    String?
+  orderedAt        DateTime?       @db.Date
+  manualStatus     MaterialStatus?
+  manualUnitCost   Decimal?        @db.Decimal(12, 2)
+  createdById      String?
+  createdAt        DateTime        @default(now())
+
+  poLines      PurchaseOrderLine[]
+  usage        MaterialUsage[]
+  requestLines MaterialRequestLine[]
+}
+
+model PurchaseOrder {
+  id                     String           @id @default(cuid())
+  projectId              String
+  project                Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number                 String           @unique
+  supplierId             String
+  supplier               Organization     @relation(fields: [supplierId], references: [id])
+  supplierQuoteId        String?
+  supplierQuote          SupplierQuote?   @relation(fields: [supplierQuoteId], references: [id])
+  materialRequestId      String?
+  materialRequest        MaterialRequest? @relation(fields: [materialRequestId], references: [id])
+  shopDrawingsRequired   Boolean          @default(false)
+  deliveryOverrideReason String?
+  deliveryOverrideById   String?
+  status                 POStatus         @default(DRAFT)
+  issuedAt               DateTime?
+  expectedDelivery       DateTime?        @db.Date
+  deliveryAddress        String?
+  notes                  String?
+  total                  Decimal          @default(0) @db.Decimal(14, 2)
+  createdById            String?
+  createdAt              DateTime         @default(now())
+
+  lines            PurchaseOrderLine[]
+  receipts         Receipt[]
+  supplierInvoices SupplierInvoice[]
+  shopDrawings     ShopDrawing[]
+}
+
+model PurchaseOrderLine {
+  id               String        @id @default(cuid())
+  purchaseOrderId  String
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  materialItemId   String?
+  materialItem     MaterialItem? @relation(fields: [materialItemId], references: [id], onDelete: SetNull)
+  description      String
+  quantity         Decimal       @db.Decimal(12, 2)
+  unit             String
+  unitCost         Decimal       @db.Decimal(12, 2)
+  expectedDate     DateTime?     @db.Date
+  quantityReceived Decimal       @default(0) @db.Decimal(12, 2)
+
+  receiptLines ReceiptLine[]
+  invoiceLines SupplierInvoiceLine[]
+}
+
+model Receipt {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  receivedAt      DateTime      @db.Date
+  reference       String? // packing slip / delivery ticket number
+  notes           String?
+  receivedById    String?
+  createdAt       DateTime      @default(now())
+
+  lines ReceiptLine[]
+}
+
+model ReceiptLine {
+  id        String            @id @default(cuid())
+  receiptId String
+  receipt   Receipt           @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  poLineId  String
+  poLine    PurchaseOrderLine @relation(fields: [poLineId], references: [id], onDelete: Cascade)
+  quantity  Decimal           @db.Decimal(12, 2)
+}
+
+model SupplierInvoice {
+  id              String                @id @default(cuid())
+  projectId       String
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplierId      String
+  supplier        Organization          @relation(fields: [supplierId], references: [id])
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id])
+  invoiceNumber   String
+  invoiceDate     DateTime              @db.Date
+  dueDate         DateTime?             @db.Date
+  amount          Decimal               @db.Decimal(14, 2)
+  tax             Decimal               @default(0) @db.Decimal(14, 2)
+  status          SupplierInvoiceStatus @default(RECEIVED)
+  matchStatus     MatchStatus           @default(NOT_CHECKED)
+  matchNote       String?
+  approvedById    String?
+  approvedAt      DateTime?
+  overrideReason  String?
+  createdAt       DateTime              @default(now())
+
+  payments SupplierPayment[]
+  lines    SupplierInvoiceLine[]
+
+  @@unique([supplierId, invoiceNumber])
+}
+
+model SupplierPayment {
+  id                String          @id @default(cuid())
+  supplierInvoiceId String
+  supplierInvoice   SupplierInvoice @relation(fields: [supplierInvoiceId], references: [id], onDelete: Cascade)
+  paidAt            DateTime        @db.Date
+  amount            Decimal         @db.Decimal(14, 2)
+  reference         String?
+  createdAt         DateTime        @default(now())
+}
+
+// ───────────────────────── Labour & site ─────────────────────────
+
+model Worker {
+  id           String   @id @default(cuid())
+  name         String
+  trade        String // Journeyperson, Apprentice, Lead Hand, Foreman ...
+  licenceNo    String?
+  phone        String?
+  regularRate  Decimal  @db.Decimal(10, 2)
+  overtimeRate Decimal  @db.Decimal(10, 2)
+  active       Boolean  @default(true)
+  userId       String?  @unique
+  user         User?    @relation(fields: [userId], references: [id])
+  createdAt    DateTime @default(now())
+
+  assignments  LabourAssignment[]
+  timeEntries  TimeEntry[]
+  clockEntries ClockEntry[]
+  documents    Document[]
+  usage        MaterialUsage[]
+}
+
+model LabourAssignment {
+  id        String   @id @default(cuid())
+  workerId  String
+  worker    Worker   @relation(fields: [workerId], references: [id])
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date
+  hours     Decimal  @default(8) @db.Decimal(5, 2)
+  notes     String?
+
+  @@unique([workerId, projectId, date])
+  @@index([date])
+}
+
+model TimeEntry {
+  id            String      @id @default(cuid())
+  workerId      String
+  worker        Worker      @relation(fields: [workerId], references: [id])
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date          DateTime    @db.Date
+  regularHours  Decimal     @db.Decimal(5, 2)
+  overtimeHours Decimal     @default(0) @db.Decimal(5, 2)
+  regularRate   Decimal     @db.Decimal(10, 2)
+  overtimeRate  Decimal     @db.Decimal(10, 2)
+  cost          Decimal     @db.Decimal(12, 2)
+  costCode      String?
+  changeOrderId String?
+  description   String?
+  submittedById String?
+  approvedById  String?
+  approvedAt    DateTime?
+  source        String      @default("TIMESHEET") // CLOCK, TIMESHEET, MANUAL
+  clockEntryId  String?     @unique
+  clockEntry    ClockEntry? @relation(fields: [clockEntryId], references: [id], onDelete: SetNull)
+  editedById    String?
+  createdAt     DateTime    @default(now())
+
+  @@index([projectId, date])
+}
+
+model DailyReport {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date          DateTime @db.Date
+  weather       String?
+  manpower      Int      @default(0)
+  workPerformed String
+  delays        String?
+  safetyNotes   String?
+  visitors      String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([projectId, date])
+}
+
+// ───────────────────────── Changes ─────────────────────────
+
+model Rfi {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number         String
+  subject        String
+  question       String
+  sentAt         DateTime?
+  requiredBy     DateTime? @db.Date
+  responsibleId  String?
+  response       String?
+  respondedAt    DateTime?
+  respondedBy    String?
+  changeRequired Boolean?
+  status         RfiStatus @default(OPEN)
+  createdById    String?
+  createdAt      DateTime  @default(now())
+
+  changeOrders ChangeOrder[]
+
+  @@unique([projectId, number])
+}
+
+model Esi {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number         String
+  issuedBy       String?
+  receivedAt     DateTime @db.Date
+  description    String
+  changeRequired Boolean?
+  status         String   @default("OPEN") // OPEN, ACTIONED, CLOSED
+  createdAt      DateTime @default(now())
+
+  changeOrders ChangeOrder[]
+
+  @@unique([projectId, number])
+}
+
+model ChangeOrder {
+  id                 String       @id @default(cuid())
+  projectId          String
+  project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number             String
+  title              String
+  description        String
+  reason             String
+  rfiId              String?
+  rfi                Rfi?         @relation(fields: [rfiId], references: [id])
+  esiId              String?
+  esi                Esi?         @relation(fields: [esiId], references: [id])
+  materialCost       Decimal      @default(0) @db.Decimal(14, 2)
+  labourHours        Decimal      @default(0) @db.Decimal(10, 2)
+  labourRate         Decimal      @default(0) @db.Decimal(10, 2)
+  labourCost         Decimal      @default(0) @db.Decimal(14, 2)
+  otherCost          Decimal      @default(0) @db.Decimal(14, 2)
+  markupPercent      Decimal      @default(0) @db.Decimal(5, 2)
+  proposedAmount     Decimal      @default(0) @db.Decimal(14, 2)
+  approvedAmount     Decimal?     @db.Decimal(14, 2)
+  clientPoNumber     String?
+  scheduleImpactDays Int          @default(0)
+  status             ChangeStatus @default(DRAFT)
+  submittedAt        DateTime?
+  decidedAt          DateTime?
+  decisionNote       String?
+  clientReference    String?
+  createdById        String?
+  createdAt          DateTime     @default(now())
+
+  lines          ChangeOrderLine[]
+  contractChange ContractValueChange?
+  billingLine    BillingLine?
+  invoices       Invoice[]
+
+  @@unique([projectId, number])
+}
+
+model ChangeOrderLine {
+  id                 String       @id @default(cuid())
+  changeOrderId      String
+  changeOrder        ChangeOrder  @relation(fields: [changeOrderId], references: [id], onDelete: Cascade)
+  category           LineCategory
+  description        String
+  quantity           Decimal      @db.Decimal(12, 2)
+  unit               String       @default("ea")
+  unitPrice          Decimal      @default(0) @db.Decimal(12, 2)
+  labourHoursPerUnit Decimal      @default(0) @db.Decimal(10, 3)
+}
+
+// ───────────────────────── Billing ─────────────────────────
+
+/// Schedule of values. Change-order lines are created only by approval.
+model BillingLine {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sortOrder      Int          @default(0)
+  description    String
+  scheduledValue Decimal      @db.Decimal(14, 2)
+  changeOrderId  String?      @unique
+  changeOrder    ChangeOrder? @relation(fields: [changeOrderId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  drawLines DrawLine[]
+}
+
+model ProgressDraw {
+  id          String     @id @default(cuid())
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  drawNumber  Int
+  periodEnd   DateTime   @db.Date
+  status      DrawStatus @default(DRAFT)
+  thisPeriod  Decimal    @default(0) @db.Decimal(14, 2)
+  holdback    Decimal    @default(0) @db.Decimal(14, 2)
+  notes       String?
+  createdById String?
+  createdAt   DateTime   @default(now())
+
+  lines   DrawLine[]
+  invoice Invoice?
+
+  @@unique([projectId, drawNumber])
+}
+
+model DrawLine {
+  id               String       @id @default(cuid())
+  drawId           String
+  draw             ProgressDraw @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  billingLineId    String
+  billingLine      BillingLine  @relation(fields: [billingLineId], references: [id])
+  previousAmount   Decimal      @db.Decimal(14, 2)
+  thisPeriodAmount Decimal      @db.Decimal(14, 2)
+
+  @@unique([drawId, billingLineId])
+}
+
+model Invoice {
+  id                String        @id @default(cuid())
+  projectId         String
+  project           Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number            String        @unique
+  clientPoId        String?
+  clientPo          ClientPO?     @relation(fields: [clientPoId], references: [id])
+  drawId            String?       @unique
+  draw              ProgressDraw? @relation(fields: [drawId], references: [id])
+  changeOrderId     String?
+  changeOrder       ChangeOrder?  @relation(fields: [changeOrderId], references: [id])
+  description       String?
+  invoiceDate       DateTime      @db.Date
+  dueDate           DateTime      @db.Date
+  subtotal          Decimal       @db.Decimal(14, 2)
+  holdback          Decimal       @default(0) @db.Decimal(14, 2)
+  taxPercent        Decimal       @db.Decimal(5, 2)
+  tax               Decimal       @db.Decimal(14, 2)
+  total             Decimal       @db.Decimal(14, 2)
+  approvedAmount    Decimal?      @db.Decimal(14, 2)
+  paidAmount        Decimal       @default(0) @db.Decimal(14, 2)
+  status            InvoiceStatus @default(DRAFT)
+  isFinal           Boolean       @default(false)
+  isHoldbackRelease Boolean       @default(false)
+  submittedAt       DateTime?
+  createdById       String?
+  createdAt         DateTime      @default(now())
+
+  payments Payment[]
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  receivedAt  DateTime @db.Date
+  amount      Decimal  @db.Decimal(14, 2)
+  method      String?
+  reference   String?
+  createdById String?
+  createdAt   DateTime @default(now())
+}
+
+// ───────────────────────── Inspections & closeout ─────────────────────────
+
+model Inspection {
+  id                String           @id @default(cuid())
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type              String // ESA Rough-in, ESA Final, Fire Alarm Verification, Consultant Review, Internal QA ...
+  isEsa             Boolean          @default(false)
+  isFinal           Boolean          @default(false)
+  scheduledAt       DateTime
+  inspector         String?
+  esaNotificationNo String?
+  result            InspectionResult @default(SCHEDULED)
+  resultDate        DateTime?
+  notes             String?
+  reinspectionOfId  String?
+  createdAt         DateTime         @default(now())
+
+  deficiencies Deficiency[]
+}
+
+model Deficiency {
+  id               String           @id @default(cuid())
+  projectId        String
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inspectionId     String?
+  inspection       Inspection?      @relation(fields: [inspectionId], references: [id], onDelete: SetNull)
+  description      String
+  location         String?
+  assignedToId     String?
+  dueDate          DateTime?        @db.Date
+  status           DeficiencyStatus @default(OPEN)
+  correctiveAction String?
+  completedAt      DateTime?
+  createdAt        DateTime         @default(now())
+
+  @@index([projectId, status])
+}
+
+model CommissioningItem {
+  id          String              @id @default(cuid())
+  projectId   String
+  project     Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  system      String
+  test        String
+  scheduledAt DateTime?           @db.Date
+  performedAt DateTime?           @db.Date
+  performedBy String?
+  result      CommissioningResult @default(PENDING)
+  notes       String?
+  createdAt   DateTime            @default(now())
+}
+
+model CloseoutItem {
+  id            String         @id @default(cuid())
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key           String
+  name          String
+  mandatory     Boolean        @default(true)
+  autoCheck     String? // system-verified condition key
+  status        CloseoutStatus @default(OPEN)
+  sortOrder     Int            @default(0)
+  completedAt   DateTime?
+  completedById String?
+  waivedAt      DateTime?
+  waivedById    String?
+  waiverReason  String?
+  notes         String?
+
+  @@unique([projectId, key])
+}
+
+// ───────────────────────── Notifications ─────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  link      String?
+  projectId String?
+  dedupeKey String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
+}
+
+// ───────────────────────── Tasks, calendar ─────────────────────────
+
+model Task {
+  id          String     @id @default(cuid())
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  assigneeId  String?
+  assignee    User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  dueDate     DateTime?  @db.Date
+  status      TaskStatus @default(OPEN)
+  completedAt DateTime?
+  createdById String?
+  createdAt   DateTime   @default(now())
+
+  @@index([assigneeId, status])
+}
+
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  title       String
+  startsAt    DateTime
+  endsAt      DateTime
+  location    String?
+  notes       String?
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User     @relation("EventCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  attendees CalendarEventAttendee[]
+
+  @@index([startsAt])
+}
+
+model CalendarEventAttendee {
+  eventId String
+  event   CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, userId])
+}
+
+// ───────────────────────── Material requests & usage ─────────────────────────
+
+model MaterialRequest {
+  id            String                @id @default(cuid())
+  projectId     String
+  project       Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number        String
+  requestedById String
+  neededBy      DateTime?             @db.Date
+  status        MaterialRequestStatus @default(REQUESTED)
+  notes         String?
+  createdAt     DateTime              @default(now())
+
+  lines          MaterialRequestLine[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([projectId, number])
+}
+
+model MaterialRequestLine {
+  id                String          @id @default(cuid())
+  materialRequestId String
+  materialRequest   MaterialRequest @relation(fields: [materialRequestId], references: [id], onDelete: Cascade)
+  materialItemId    String?
+  materialItem      MaterialItem?   @relation(fields: [materialItemId], references: [id], onDelete: SetNull)
+  description       String
+  quantity          Decimal         @db.Decimal(12, 2)
+  unit              String          @default("ea")
+}
+
+/// Material consumed on site, logged from the field.
+model MaterialUsage {
+  id             String        @id @default(cuid())
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  materialItemId String?
+  materialItem   MaterialItem? @relation(fields: [materialItemId], references: [id], onDelete: SetNull)
+  workerId       String?
+  worker         Worker?       @relation(fields: [workerId], references: [id])
+  description    String
+  quantity       Decimal       @db.Decimal(12, 2)
+  unit           String        @default("ea")
+  usedOn         DateTime      @db.Date
+  note           String?
+  createdById    String?
+  createdAt      DateTime      @default(now())
+}
+
+model SupplierInvoiceLine {
+  id                String             @id @default(cuid())
+  supplierInvoiceId String
+  supplierInvoice   SupplierInvoice    @relation(fields: [supplierInvoiceId], references: [id], onDelete: Cascade)
+  poLineId          String?
+  poLine            PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+  description       String
+  quantity          Decimal            @db.Decimal(12, 2)
+  unitPrice         Decimal            @db.Decimal(12, 2)
+}
+
+// ───────────────────────── Field (trade) app ─────────────────────────
+
+model ClockEntry {
+  id         String    @id @default(cuid())
+  workerId   String
+  worker     Worker    @relation(fields: [workerId], references: [id])
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  clockInAt  DateTime
+  clockOutAt DateTime?
+  inLat      Float?
+  inLng      Float?
+  outLat     Float?
+  outLng     Float?
+  notes      String?
+  createdAt  DateTime  @default(now())
+
+  timeEntry TimeEntry?
+
+  @@index([workerId, clockOutAt])
+}
+
+model FieldUpdate {
+  id           String          @id @default(cuid())
+  projectId    String
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User            @relation(fields: [authorId], references: [id])
+  kind         FieldUpdateKind @default(UPDATE)
+  message      String
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime        @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+/// Work order completion with optional customer signature (image stored as a document).
+model WorkOrderSignoff {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  completedById  String
+  workSummary    String
+  markedComplete Boolean   @default(false)
+  customerName   String?
+  signatureDocId String?
+  signedAt       DateTime?
+  createdAt      DateTime  @default(now())
+}

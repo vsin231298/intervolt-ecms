@@ -4,7 +4,8 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["pdfkit", "exceljs"],
-  experimental: { serverActions: { bodySizeLimit: "100mb" } },
+  // allowedOrigins: forms submitted through the free Cloudflare quick link (see docker-compose "quicklink").
+  experimental: { serverActions: { bodySizeLimit: "100mb", allowedOrigins: ["*.trycloudflare.com"] } },
   async headers() {
     return [
       {

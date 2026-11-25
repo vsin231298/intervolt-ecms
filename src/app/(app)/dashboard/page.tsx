@@ -9,6 +9,7 @@ import { Badge, Card, Empty, PageHeader, Stat, StatusBadge, Tabs } from "@/compo
 import { BarsChart, HBarsChart } from "@/components/Charts";
 import { agenda, claimsPipeline, financeOverview, operationsKpis, type ClaimBucket } from "@/services/dashboard";
 import { signals } from "@/services/automation";
+import { currentPublicLink } from "@/lib/publicLink";
 
 export const metadata = { title: "Dashboard" };
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         {can(user.role, "leads.edit") ? <Link href="/leads/new" className="btn btn-secondary">New lead</Link> : null}
         {can(user.role, "jobs.create") ? <Link href="/jobs/new" className="btn btn-primary">New work order</Link> : null}
       </>} />
+      {can(user.role, "admin.users") ? <OutsideLink /> : null}
       <Tabs items={tabs} current={tab} />
       {tab === "projects" ? <ProjectsTab /> : tab === "finance" && showFinance ? <FinanceTab /> : <OperationsTab userId={user.id} />}
     </div>
@@ -209,6 +211,20 @@ async function FinanceTab() {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+async function OutsideLink() {
+  const link = await currentPublicLink();
+  if (!link) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-accent-500/40 bg-accent-50 px-4 py-3 text-sm">
+      <div className="font-semibold text-slate-900">Outside access link (phones on site, working from home)</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <a href={link} className="link break-all font-mono" target="_blank" rel="noreferrer">{link}</a>
+      </div>
+      <div className="mt-1 text-xs text-slate-600">Share this with your team. It changes whenever the office PC or Docker restarts, so check here for the current one.</div>
     </div>
   );
 }

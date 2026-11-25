@@ -107,6 +107,14 @@ Caddy obtains and renews a free certificate automatically. Open **https://interv
 *Already own a domain on Cloudflare?* Instead of Steps 5–6 you can use a free Cloudflare Tunnel (no router ports needed):
 Cloudflare dashboard → Zero Trust → Networks → Tunnels → Create → copy the token into `CLOUDFLARE_TUNNEL_TOKEN`, route your hostname to `http://app:3000`, then `docker compose --profile tunnel up -d`.
 
+## No router access? Free quick link (Cloudflare)
+
+Gives a secure `https://…trycloudflare.com` address that works from phones anywhere, with no router changes and no account:
+```bash
+docker compose --profile quicklink up -d
+```
+Administrators see the current link at the top of the **Dashboard**. The address changes whenever the PC or Docker restarts, so re-share it from there. For a permanent address use Steps 5–6 or Oracle Cloud.
+
 ## Step 7 — First things to do in the app
 
 1. **Admin → Settings**: company name, address, HST number; check tax %, holdback %, payment terms, labour rate, overtime rule (see [ASSUMPTIONS.md](ASSUMPTIONS.md)).

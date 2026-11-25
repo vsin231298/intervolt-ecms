@@ -98,6 +98,17 @@ services:
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
 
+  # Free secure link for phones/outside the office, no router changes and no account needed.
+  # The address is random (https://xxxx.trycloudflare.com) and changes when this container restarts;
+  # administrators see the current link at the top of the Dashboard.
+  #   docker compose --profile quicklink up -d
+  quicklink:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["quicklink"]
+    depends_on: [app]
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://app:3000
+
 volumes:
   pgdata:
   files:

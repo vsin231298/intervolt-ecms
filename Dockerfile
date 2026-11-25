@@ -18,6 +18,7 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/next.config.ts /app/tsconfig.json ./
 COPY --from=build /app/src ./src
+COPY --from=build /app/public ./public
 RUN mkdir -p /app/storage && chown -R node:node /app/storage
 USER node
 EXPOSE 3000

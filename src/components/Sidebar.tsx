@@ -6,7 +6,7 @@ import { useState } from "react";
 import clsx from "clsx";
 import {
   LayoutDashboard, Target, Briefcase, CalendarDays, Users, Clock, ShoppingCart, FileStack, Wallet, FolderOpen,
-  HardHat, Building2, BarChart3, Smartphone, Settings, ShieldCheck, UserCog, Menu, X, Zap,
+  HardHat, Building2, BarChart3, Smartphone, Settings, ShieldCheck, UserCog, Menu, X,
 } from "lucide-react";
 
 const ICONS = { LayoutDashboard, Target, Briefcase, CalendarDays, Users, Clock, ShoppingCart, FileStack, Wallet, FolderOpen, HardHat, Building2, BarChart3, Smartphone, Settings, ShieldCheck, UserCog };
@@ -31,7 +31,7 @@ export function Sidebar({ items }: { items: NavItem[] }) {
               onClick={() => setOpen(false)}
               className={clsx(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
-                active ? "bg-brand-600 text-white" : "text-slate-300 hover:bg-white/10 hover:text-white",
+                active ? "bg-accent-500 text-white" : "text-slate-300 hover:bg-white/10 hover:text-white",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" />
@@ -44,19 +44,19 @@ export function Sidebar({ items }: { items: NavItem[] }) {
     </nav>
   );
   const brand = (
-    <Link href="/" className="flex items-center gap-2 px-5 py-4 text-white">
-      <span className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400 text-slate-900"><Zap className="h-5 w-5" /></span>
-      <span className="leading-tight">
-        <span className="block text-sm font-bold tracking-wide">INTERVOLT</span>
-        <span className="block text-[11px] text-slate-400">Contracting Management</span>
+    <Link href="/" className="block px-4 pb-2 pt-4">
+      <span className="block rounded-md bg-white px-3 py-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/logo.png" alt="Intervolt Electric Ltd." className="mx-auto h-10 w-auto" />
       </span>
+      <span className="mt-1.5 block text-center text-[11px] text-slate-400">Contracting Management</span>
     </Link>
   );
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost fixed left-2 top-2 z-40 lg:hidden" aria-label="Open menu">
+      <div className="lg:hidden"><button type="button" onClick={() => setOpen(true)} className="btn btn-ghost fixed left-2 top-2 z-40" aria-label="Open menu">
         <Menu className="h-5 w-5" />
-      </button>
+      </button></div>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col bg-brand-900 lg:flex">{brand}{nav}</aside>
       {open ? (
         <div className="fixed inset-0 z-50 lg:hidden">

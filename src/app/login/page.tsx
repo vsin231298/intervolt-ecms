@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Zap } from "lucide-react";
 import { currentUser } from "@/lib/auth";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { loginAction } from "@/app/actions/auth";
@@ -12,12 +11,12 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-900 to-slate-900 p-4">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center justify-center gap-3 text-white">
-          <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-amber-400 text-slate-900"><Zap className="h-6 w-6" /></span>
-          <div>
-            <div className="text-xl font-bold tracking-wide">INTERVOLT ELECTRIC</div>
-            <div className="text-sm text-slate-300">Contracting Management System</div>
+        <div className="mb-6 text-center">
+          <div className="inline-block rounded-lg bg-white px-5 py-3 shadow">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/logo.png" alt="Intervolt Electric Ltd." className="h-16 w-auto" />
           </div>
+          <div className="mt-3 text-sm text-slate-300">Contracting Management System</div>
         </div>
         <div className="card p-6">
           <h1 className="mb-4 text-lg font-semibold">Sign in</h1>

@@ -1,6 +1,8 @@
 import "server-only";
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import { NextResponse } from "next/server";
 import { getSetting } from "./settings";
 
@@ -71,7 +73,14 @@ export async function toPdf(opts: { title: string; subtitle?: string; blocks: Pd
   const done = new Promise<Buffer>((res) => doc.on("end", () => res(Buffer.concat(chunks))));
   const W = doc.page.width - 80;
 
-  doc.font("Helvetica-Bold").fontSize(16).fillColor("#1d4ed8").text(company, 40, 40);
+  const logo = path.join(process.cwd(), "public", "brand", "logo.png");
+  if (existsSync(logo)) {
+    doc.image(logo, 40, 34, { height: 44 });
+    doc.y = 84;
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#1e3962").text(company, 40, doc.y);
+  } else {
+    doc.font("Helvetica-Bold").fontSize(16).fillColor("#1e3962").text(company, 40, 40);
+  }
   doc.font("Helvetica").fontSize(8).fillColor("#475569").text([address, phone, hst ? `HST ${hst}` : ""].filter(Boolean).join("  ·  "));
   doc.moveDown(0.8);
   doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text(opts.title);

@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+storage
+storage-test
+backups
+*.tsbuildinfo
+next-env.d.ts
+scripts/.mks.mts

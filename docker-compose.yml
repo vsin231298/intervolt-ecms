@@ -1,0 +1,104 @@
+# Intervolt ECMS — everything needed to run on one machine, free.
+#   1. cp .env.production.example .env   (then edit the passwords)
+#   2. docker compose up -d --build
+#   3. docker compose run --rm app npm run db:setup   (creates the first admin from ADMIN_* in .env)
+# HTTPS (needed for GPS clock-in on phones), pick ONE:
+#   a) Free DuckDNS name + automatic certificate:  set DOMAIN in .env, then  docker compose --profile https up -d
+#   b) Cloudflare Tunnel (if you own a domain on Cloudflare): set CLOUDFLARE_TUNNEL_TOKEN, then  docker compose --profile tunnel up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: intervolt
+      POSTGRES_USER: intervolt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intervolt -d intervolt"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    image: intervolt-ecms:latest
+    init: true
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://intervolt:${POSTGRES_PASSWORD}@db:5432/intervolt
+      STORAGE_LOCAL_DIR: /app/storage
+    volumes:
+      - files:/app/storage
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+  # Hourly reminders: tender deadlines, quote follow-ups, late deliveries, overdue invoices, expiring certificates…
+  jobs:
+    image: intervolt-ecms:latest
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://intervolt:${POSTGRES_PASSWORD}@db:5432/intervolt
+    command: ["sh", "-c", "while true; do npm run --silent jobs || true; sleep 3600; done"]
+
+  # Nightly backup of the database and uploaded files into ./backups (keeps 14 days by default).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: intervolt
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: intervolt
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+    volumes:
+      - ./backups:/backups
+      - files:/storage:ro
+      - ./scripts/backup.sh:/backup.sh:ro
+    entrypoint: ["sh", "-c", "while true; do now=$$(date +%H); if [ \"$$now\" = \"$$(printf %02d $$BACKUP_HOUR)\" ]; then sh /backup.sh /backups /storage; sleep 3600; fi; sleep 600; done"]
+
+  # Automatic HTTPS with free Let's Encrypt certificates. Needs ports 80 and 443 open to this machine.
+  https:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["https"]
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:3000
+    volumes:
+      - caddy_data:/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    depends_on: [app]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+volumes:
+  pgdata:
+  files:
+  caddy_data:

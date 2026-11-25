@@ -40,7 +40,8 @@ export async function login(email: string, password: string): Promise<{ ok: true
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIES !== "1",
+    // Secure cookies whenever the app is served over HTTPS (APP_URL), so a plain-HTTP first test on a LAN still works.
+    secure: (process.env.APP_URL ?? "").startsWith("https://") && process.env.INSECURE_COOKIES !== "1",
     sameSite: "lax",
     path: "/",
     expires: expiresAt,

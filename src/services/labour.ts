@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 import { can } from "@/lib/rbac";
 import { ForbiddenError, NotFoundError, UserError, assert } from "@/lib/errors";
 import { d, pct, round2, sum } from "@/lib/money";
-import { addDays, dayOf, today, TZ } from "@/lib/dates";
+import { addDays, dayOf, today, TZ, parseDateTimeLocal } from "@/lib/dates";
 import { zDate, zId, zNonNeg, zOptId, zOptText, zText } from "@/lib/forms";
 import { notifyUsers } from "@/lib/notify";
 import { getSetting } from "@/lib/settings";
@@ -205,7 +205,8 @@ export async function assertFieldAccess(actor: Actor, projectId: string) {
   if (!jobs.some((j) => j.project.id === projectId)) throw new ForbiddenError("You are not assigned to this job.");
 }
 
-export type GeoPoint = { lat?: number; lng?: number; accuracy?: number; error?: string };
+/** Phone location at clock in/out, plus the office questions asked on the same form. */
+export type GeoPoint = { lat?: number; lng?: number; accuracy?: number; error?: string; officeFrom?: string; toOffice?: boolean };
 
 /**
  * Geofence: when enabled, clock in/out only works within the job's radius of its site pin.
@@ -230,26 +231,74 @@ export async function assertOnSite(t: Tx, p: { number: string; siteLat: number |
   return dist;
 }
 
-/**
- * Travel between jobs: the gap between this worker's last clock-out today and this clock-in is
- * paid as regular hours on the job they arrived at. Office can edit or delete it in Timesheets.
- */
-async function addTravel(t: Tx, actor: Actor, worker: ClockWorker, toProjectId: string, toNumber: string, at: Date) {
-  if (!(await getSetting("labour.payTravelBetweenJobs", t))) return null;
-  const day = dayOf(at);
-  const last = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: { not: null, lte: at } }, orderBy: { clockOutAt: "desc" }, include: { project: true } });
-  if (!last || !last.clockOutAt || last.projectId === toProjectId) return null;
-  if (dayOf(last.clockOutAt).getTime() !== day.getTime()) return null;
-  const minutes = Math.round((at.getTime() - last.clockOutAt.getTime()) / 60_000);
-  if (minutes < 1) return null;
+const hm = (x: Date) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(x);
+const dur = (minutes: number) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+/** Company-time-zone midnight at the start of the day `at` falls on. */
+const startOfDay = (at: Date) => parseDateTimeLocal(`${dayOf(at).toISOString().slice(0, 10)}T00:00`)!;
+
+async function paidExtra(t: Tx, actor: Actor, worker: ClockWorker, projectId: string, at: Date, minutes: number, source: string, description: string) {
   const hours = Math.round((minutes / 60) * 100) / 100;
   const { cost } = await costFor(t, worker.id, hours, 0);
-  const fmt = (x: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(x);
-  const e = await t.timeEntry.create({
-    data: { workerId: worker.id, projectId: toProjectId, date: day, regularHours: hours, overtimeHours: 0, regularRate: worker.regularRate, overtimeRate: worker.overtimeRate, cost, source: "TRAVEL", description: `Travel ${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} from ${last.project.number} (${fmt(last.clockOutAt)} to ${fmt(at)})`, submittedById: actor.id },
+  return t.timeEntry.create({
+    data: { workerId: worker.id, projectId, date: dayOf(at), regularHours: hours, overtimeHours: 0, regularRate: worker.regularRate, overtimeRate: worker.overtimeRate, cost, source, description, submittedById: actor.id },
   });
+}
+
+/**
+ * Paid time before this clock-in, as regular hours on the job they arrived at (office can edit/delete in Timesheets):
+ * - first clock-in of the day and they say they went to the office first → office start time to now ("typed by worker")
+ * - otherwise, the gap since their last clock-out (or "Done at office") today → travel
+ */
+async function addTravel(t: Tx, actor: Actor, worker: ClockWorker, toProjectId: string, toNumber: string, at: Date, officeFrom?: string) {
+  const day0 = startOfDay(at);
+  const earlierToday = await t.clockEntry.count({ where: { workerId: worker.id, clockInAt: { gte: day0, lt: at } } });
+  if (officeFrom && earlierToday === 0) {
+    assert(/^\d{1,2}:\d{2}$/.test(officeFrom), "Enter office start time.");
+    const from = parseDateTimeLocal(`${dayOf(at).toISOString().slice(0, 10)}T${officeFrom.padStart(5, "0")}`)!;
+    assert(from < at, "Office start must be before now.");
+    const minutes = Math.round((at.getTime() - from.getTime()) / 60_000);
+    const e = await paidExtra(t, actor, worker, toProjectId, at, minutes, "OFFICE", `Office + drive ${dur(minutes)} (${hm(from)} to ${hm(at)}), typed by worker`);
+    await audit(t, actor, { action: "time.office", entityType: "TimeEntry", entityId: e.id, projectId: toProjectId, summary: `${worker.name} office first from ${hm(from)}, ${minutes} min before ${toNumber}` });
+    return e;
+  }
+  if (!(await getSetting("labour.payTravelBetweenJobs", t))) return null;
+  const last = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: { not: null, gte: day0, lte: at } }, orderBy: { clockOutAt: "desc" }, include: { project: true } });
+  if (!last || !last.clockOutAt || last.projectId === toProjectId) return null;
+  const left = last.officeDoneAt ?? last.clockOutAt;
+  const minutes = Math.round((at.getTime() - left.getTime()) / 60_000);
+  if (minutes < 1) return null;
+  const e = await paidExtra(t, actor, worker, toProjectId, at, minutes, "TRAVEL", `Travel ${dur(minutes)} from ${last.officeDoneAt ? "office" : last.project.number} (${hm(left)} to ${hm(at)})`);
   await audit(t, actor, { action: "time.travel", entityType: "TimeEntry", entityId: e.id, projectId: toProjectId, summary: `${worker.name} travel ${minutes} min ${last.project.number} → ${toNumber}` });
   return e;
+}
+
+/** No clock-in yet today: the clock-in form asks "Office first?". */
+export async function firstClockInToday(workerId: string) {
+  return (await prisma.clockEntry.count({ where: { workerId, clockInAt: { gte: startOfDay(new Date()) } } })) === 0;
+}
+
+/** After clocking out with "Going to office", the drop-off they haven't finished yet (today, nothing clocked since). */
+export async function pendingOfficeDropOff(workerId: string) {
+  const now = new Date();
+  const last = await prisma.clockEntry.findFirst({ where: { workerId, clockInAt: { gte: startOfDay(now) } }, orderBy: { clockInAt: "desc" }, include: { project: true } });
+  return last && last.clockOutAt && last.toOffice && !last.officeDoneAt ? last : null;
+}
+
+/** "Done at office": drive back + drop-off time, from site clock-out until now, on that job. */
+export async function doneAtOffice(actor: Actor, geo: GeoPoint = {}) {
+  requirePerm(actor, "field.use");
+  return tx(async (t) => {
+    const worker = await workerForUser(actor.id, t);
+    assert(worker, "Your account is not linked to a worker profile.");
+    const now = new Date();
+    const last = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockInAt: { gte: startOfDay(now) } }, orderBy: { clockInAt: "desc" }, include: { project: true } });
+    assert(last && last.clockOutAt && last.toOffice && !last.officeDoneAt, "Nothing to finish.");
+    const minutes = Math.max(0, Math.round((now.getTime() - last.clockOutAt.getTime()) / 60_000));
+    await t.clockEntry.update({ where: { id: last.id }, data: { officeDoneAt: now, officeLat: geo.lat, officeLng: geo.lng } });
+    const e = minutes > 0 ? await paidExtra(t, actor, worker, last.projectId, now, minutes, "OFFICE", `Drive to office + drop-off ${dur(minutes)} (${hm(last.clockOutAt)} to ${hm(now)})`) : null;
+    await audit(t, actor, { action: "time.office", entityType: "ClockEntry", entityId: last.id, projectId: last.projectId, summary: `${worker.name} done at office, ${minutes} min after leaving ${last.project.number}` });
+    return { minutes, timeEntryId: e?.id ?? null };
+  });
 }
 
 export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {}) {
@@ -263,7 +312,7 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const p = await loadProject(t, projectId);
     const dist = await assertOnSite(t, p, geo, "clock in");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt);
+    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt, geo.officeFrom);
     // Service work order with nobody leading right now: first one in leads.
     if (p.jobType === "SERVICE" && !(await leadIsOnCall(t, p.id, p.serviceLeadUserId, actor.id))) await t.project.update({ where: { id: p.id }, data: { serviceLeadUserId: actor.id } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
@@ -321,7 +370,7 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
     await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
     await createCloseoutItems(t, p.id, "SERVICE");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId: p.id, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await addTravel(t, actor, worker, p.id, number, c.clockInAt);
+    await addTravel(t, actor, worker, p.id, number, c.clockInAt, geo.officeFrom);
     await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} service call started on site by ${worker.name}: ${input.customer}${input.address ? `, ${input.address}` : ""}`, after: { ...input, siteLat: geo.lat, siteLng: geo.lng, accuracy: geo.accuracy } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId: p.id, summary: `${worker.name} clocked in on ${number} (service call start)` });
     await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], { type: "job.assigned", title: `${worker.name} started service call ${number}: ${input.customer}`, body: `${input.address ?? "Address not given"}${input.problem ? ` · ${input.problem.slice(0, 140)}` : ""}. Add the client, PM and pricing.`, link: `/jobs/${p.id}`, projectId: p.id }, actor.id);
@@ -419,7 +468,7 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     const leads = await leadIsOnCall(t, projectId, p.serviceLeadUserId, actor.id);
     if (!leads) await t.project.update({ where: { id: projectId }, data: { serviceLeadUserId: actor.id } });
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt);
+    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt, geo.officeFrom);
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} with ${lead.worker.name}${leads ? "" : " (now lead)"}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return p;
   });
@@ -493,7 +542,7 @@ async function closeClock(t: Tx, actor: Actor, worker: ClockWorker, open: OpenCl
   {
     const now = at ?? new Date();
     const hours = Math.round(((now.getTime() - open.clockInAt.getTime()) / 3_600_000) * 4) / 4; // nearest 15 min
-    await t.clockEntry.update({ where: { id: open.id }, data: { clockOutAt: now, outLat: geo.lat, outLng: geo.lng, notes } });
+    await t.clockEntry.update({ where: { id: open.id }, data: { clockOutAt: now, outLat: geo.lat, outLng: geo.lng, notes, toOffice: !!geo.toOffice } });
     const day = dayOf(now);
     const existing = await t.timeEntry.findMany({ where: { workerId: worker.id, date: day } });
     const already = Number(sum(existing.map((e) => d(e.regularHours).plus(d(e.overtimeHours)))));

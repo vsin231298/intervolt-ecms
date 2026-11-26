@@ -14,7 +14,7 @@ type Call = { id: string; client: string; crew: string; location: string | null;
  * One "Service call" button: if someone already started a call here, offer Join; otherwise Start.
  * Re-checks every 15 s while waiting (only when nothing has been typed). The server enforces the site range.
  */
-export function ServiceCall({ calls, coWorkers, within, joinAction, startAction }: { calls: Call[]; coWorkers: { id: string; name: string }[]; within: number; joinAction: Action; startAction: Action }) {
+export function ServiceCall({ calls, coWorkers, within, joinAction, startAction, officeFirst = false }: { calls: Call[]; coWorkers: { id: string; name: string }[]; within: number; joinAction: Action; startAction: Action; officeFirst?: boolean }) {
   const router = useRouter();
   const [here, setHere] = useState<{ lat: number; lng: number } | null>(null);
   const [status, setStatus] = useState<"locating" | "ok" | "denied" | "unavailable">("locating");
@@ -62,7 +62,7 @@ export function ServiceCall({ calls, coWorkers, within, joinAction, startAction 
 
   const startForm = (
     <div ref={formRef}>
-      <ClockForm action={startAction} label="Start & clock in" tone="in">
+      <ClockForm action={startAction} label="Start & clock in" tone="in" officeFirst={officeFirst}>
         <input name="customer" required placeholder="Client name" className="input" />
         <input name="address" placeholder="Address (optional)" className="input" />
         <select name="helperWorkerId" defaultValue="" className="input" aria-label="Co-worker (optional)">
@@ -81,7 +81,7 @@ export function ServiceCall({ calls, coWorkers, within, joinAction, startAction 
             <div className="font-semibold">{c.crew} started {c.client}{c.namedMe ? "" : " here"}.</div>
             {c.namedMe ? <div className="text-xs font-semibold text-accent-600">{c.crew.split(",")[0]} added you</div> : null}
             <div className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{c.location ? `${c.location} · ` : ""}{fmtDistance(c.dist)} away</div>
-            <div className="mt-2"><ClockForm action={joinAction} projectId={c.id} label="Join & clock in" tone="in" /></div>
+            <div className="mt-2"><ClockForm action={joinAction} projectId={c.id} label="Join & clock in" tone="in" officeFirst={officeFirst} /></div>
           </div>
         ))}
         <button type="button" onClick={() => setStartAnyway(true)} className="link text-sm">Different job? Start new call</button>

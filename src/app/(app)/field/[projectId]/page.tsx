@@ -8,7 +8,7 @@ import { qty } from "@/lib/money";
 import { Badge, Card, Field, Notice, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { ClockForm, SignaturePad } from "@/components/FieldClient";
-import { JOB_STATUSES, assertFieldAccess, needsWorkOrder, workerForUser } from "@/services/labour";
+import { JOB_STATUSES, assertFieldAccess, firstClockInToday, needsWorkOrder, workerForUser } from "@/services/labour";
 import { MaterialRows } from "@/components/MaterialRows";
 import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction, takeOverLeadAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
@@ -57,6 +57,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
     prisma.deficiency.findMany({ where: { projectId, status: { not: "COMPLETED" } }, orderBy: { dueDate: "asc" } }),
   ]);
   const here = open?.projectId === projectId;
+  const firstToday = worker && !open ? await firstClockInToday(worker.id) : false;
   const mapUrl = p.location ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.location)}` : null;
   // Prefer the approved revision; otherwise the latest.
   const drawingRows = docs.map((d) => ({ d, v: d.versions.find((v) => v.approvalStatus === "APPROVED") ?? d.versions[0] }));
@@ -105,7 +106,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
           )
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
           : open ? <Notice tone="amber">Clock out of {open.project.number} first. <Link className="link" href={`/field/${open.projectId}`}>Go there</Link></Notice>
-          : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" />}
+          : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" officeFirst={firstToday} />}
         {worker && geofenceOn ? (
           p.siteLat == null || p.siteLng == null
             ? <p className="mt-2 text-xs text-amber-700">Site not set. Call office.</p>

@@ -55,7 +55,11 @@ export async function resolveIssueAction(_p: ActionState, fd: FormData) {
 
 // ── Field app ──
 const num = (v: unknown) => (v === undefined || v === null || v === "" ? undefined : Number(v));
-const geo = (d: Record<string, unknown>) => ({ lat: num(d.lat), lng: num(d.lng), accuracy: num(d.accuracy), error: d.geoError ? String(d.geoError) : undefined });
+const geo = (d: Record<string, unknown>) => ({
+  lat: num(d.lat), lng: num(d.lng), accuracy: num(d.accuracy), error: d.geoError ? String(d.geoError) : undefined,
+  officeFrom: d.officeFirst === "on" && d.officeFrom ? String(d.officeFrom) : undefined,
+  toOffice: d.toOffice === "on",
+});
 export async function clockInAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     await labour.clockIn(actor, str(d.projectId), geo(d));
@@ -66,6 +70,12 @@ export async function clockOutAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     const r = await labour.clockOut(actor, geo(d), str(d.notes) || undefined, str(d.handLeadTo) || undefined);
     return `Clocked out: ${r.regular} regular${r.overtime ? ` + ${r.overtime} overtime` : ""} hours recorded.`;
+  });
+}
+export async function doneAtOfficeAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const r = await labour.doneAtOffice(actor, geo(d));
+    return `Done. ${Math.floor(r.minutes / 60)}:${String(r.minutes % 60).padStart(2, "0")} added.`;
   });
 }
 export async function startServiceCallAction(_p: ActionState, fd: FormData) {

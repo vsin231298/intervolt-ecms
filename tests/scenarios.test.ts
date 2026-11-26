@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { d } from "@/lib/money";
-import { addDays, today } from "@/lib/dates";
+import { addDays, today, TZ } from "@/lib/dates";
 import { resetDb, makeUser, file } from "./helpers";
 import * as projects from "@/services/projects";
 import * as est from "@/services/estimating";
@@ -418,6 +418,22 @@ describe("Scenario 4: service work order from the field", () => {
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": false });
     await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });
+    // office first (day's first clock-in), then "Going to office?" at clock-out → "Done at office"
+    await prisma.clockEntry.updateMany({ where: { workerId: w.id }, data: { clockInAt: new Date(Date.now() - 30 * 3_600_000), clockOutAt: new Date(Date.now() - 29 * 3_600_000) } });
+    expect(await labour.firstClockInToday(w.id)).toBe(true);
+    const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(Date.now() - 20 * 60_000));
+    const bakery = await labour.startServiceCall(elec, { customer: "Bakery" }, { lat: 43.64, lng: -79.39, officeFrom: hhmm });
+    const off = await prisma.timeEntry.findFirstOrThrow({ where: { projectId: bakery.id, source: "OFFICE" } });
+    expect(Number(off.regularHours)).toBeCloseTo(0.33, 1);
+    expect(off.description).toMatch(/typed by worker/);
+    expect(await prisma.timeEntry.count({ where: { projectId: bakery.id, source: "TRAVEL" } })).toBe(0);
+    await labour.completeWorkOrder(elec, bakery.id, { workSummary: "Replaced outlet", markedComplete: true });
+    await labour.clockOut(elec, { lat: 43.64, lng: -79.39, toOffice: true });
+    expect((await labour.pendingOfficeDropOff(w.id))?.projectId).toBe(bakery.id);
+    await prisma.clockEntry.updateMany({ where: { projectId: bakery.id }, data: { clockOutAt: new Date(Date.now() - 25 * 60_000) } });
+    expect((await labour.doneAtOffice(elec, {})).minutes).toBe(25);
+    expect(await labour.pendingOfficeDropOff(w.id)).toBeNull();
+    await expect(labour.doneAtOffice(elec)).rejects.toThrow(/Nothing to finish/);
     // lead + helper: helper joins a call the lead started; only the lead fills in the work order
     const helperUser = await makeUser("Hank Helper", "ELECTRICIAN");
     const hw = await labour.saveWorker(pm, null, { name: "Hank Helper", trade: "Apprentice", regularRate: 25, overtimeRate: 37.5, userId: helperUser.id, active: true });

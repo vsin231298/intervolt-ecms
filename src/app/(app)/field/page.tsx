@@ -2,13 +2,13 @@ import Link from "next/link";
 import { MapPin, ChevronRight } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { fmtDate, fmtDateTime, today } from "@/lib/dates";
+import { fmtDate, fmtDateTime, today, TZ } from "@/lib/dates";
 import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
 import { ServiceCall } from "@/components/ServiceCall";
-import { assignedJobs, joinableServiceCalls, needsWorkOrder } from "@/services/labour";
-import { clockOutAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
+import { assignedJobs, firstClockInToday, joinableServiceCalls, needsWorkOrder, pendingOfficeDropOff } from "@/services/labour";
+import { clockOutAction, doneAtOfficeAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
 
 export default async function FieldHome() {
@@ -20,6 +20,8 @@ export default async function FieldHome() {
   const woMissing = open ? await needsWorkOrder(prisma, user.id, open) : false;
   const joinable = worker && !open && allowServiceCalls ? await joinableServiceCalls(user) : [];
   const crewChoices = worker && !open && allowServiceCalls ? await prisma.worker.findMany({ where: { active: true, id: { not: worker.id } }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+  const firstToday = worker && !open ? await firstClockInToday(worker.id) : false;
+  const dropOff = worker && !open ? await pendingOfficeDropOff(worker.id) : null;
   const todays = jobs.filter((j) => j.today);
   const others = jobs.filter((j) => !j.today);
   return (
@@ -37,6 +39,12 @@ export default async function FieldHome() {
             : <ClockForm action={clockOutAction} label="Clock out" tone="out" />}
         </div>
       ) : null}
+      {dropOff ? (
+        <div className="card space-y-3 border-amber-300 p-4">
+          <div className="text-sm">Left site at {new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(dropOff.clockOutAt!)}. Tap when done at office.</div>
+          <ClockForm action={doneAtOfficeAction} label="Done at office" tone="out" notes={false} office={false} />
+        </div>
+      ) : null}
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Today&apos;s jobs</h2>
         {todays.length === 0 ? <Empty>You&apos;re not scheduled on a job today.</Empty> : (
@@ -47,7 +55,7 @@ export default async function FieldHome() {
         <details className="card p-4">
           <summary className="cursor-pointer font-semibold">Service call</summary>
           <p className="mb-3 mt-1 text-sm text-slate-500">Tap when on site.</p>
-          <ServiceCall within={300} joinAction={joinServiceCallAction} startAction={startServiceCallAction} coWorkers={crewChoices}
+          <ServiceCall within={300} joinAction={joinServiceCallAction} startAction={startServiceCallAction} coWorkers={crewChoices} officeFirst={firstToday}
             calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng, namedMe: j.namedMe }))} />
         </details>
       ) : null}

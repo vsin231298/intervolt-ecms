@@ -12,7 +12,18 @@ function Btn({ children, className }: { children: React.ReactNode; className: st
 }
 
 /** Clock in / out. Captures fresh GPS and submits; the server enforces the site geofence when it is switched on. */
-export function ClockForm({ action, projectId, label, tone, children, notes = true }: { action: Action; projectId?: string; label: string; tone: "in" | "out"; children?: React.ReactNode; notes?: boolean }) {
+/** "Office first?" on the day's first clock-in: reveals the office start time. */
+function OfficeFirst() {
+  const [on, setOn] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 px-3 py-2 text-sm">
+      <label className="flex items-center gap-2"><input type="checkbox" name="officeFirst" checked={on} onChange={(e) => setOn(e.target.checked)} /> Office first?</label>
+      {on ? <label className="flex items-center gap-2">Start time <input type="time" name="officeFrom" required className="input w-32" /></label> : null}
+    </div>
+  );
+}
+
+export function ClockForm({ action, projectId, label, tone, children, notes = true, officeFirst = false, office = true }: { action: Action; projectId?: string; label: string; tone: "in" | "out"; children?: React.ReactNode; notes?: boolean; officeFirst?: boolean; office?: boolean }) {
   const [state, formAction] = useActionState(action, {} as ActionState);
   const ref = useRef<HTMLFormElement>(null);
   const [locating, setLocating] = useState(false);
@@ -42,6 +53,8 @@ export function ClockForm({ action, projectId, label, tone, children, notes = tr
       <input type="hidden" name="lat" /><input type="hidden" name="lng" /><input type="hidden" name="accuracy" /><input type="hidden" name="geoError" />
       {children}
       {tone === "out" && notes ? <input name="notes" placeholder="Note for this shift (optional)" className="input" /> : null}
+      {tone === "in" && officeFirst ? <OfficeFirst /> : null}
+      {tone === "out" && office ? <label className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm"><input type="checkbox" name="toOffice" /> Going to office?</label> : null}
       <Btn className={tone === "in" ? "btn w-full bg-emerald-600 py-4 text-lg text-white hover:bg-emerald-700" : "btn w-full bg-red-600 py-4 text-lg text-white hover:bg-red-700"}>{locating ? "Getting location…" : label}</Btn>
       {state.error ? <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p> : null}
       {state.ok && state.message ? <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{state.message}</p> : null}

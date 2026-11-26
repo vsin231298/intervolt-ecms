@@ -1393,6 +1393,11 @@ model ClockEntry {
   outLat     Float?
   outLng     Float?
   notes      String?
+  // "Going to office" at clock-out; "Done at office" tapped later
+  toOffice     Boolean   @default(false)
+  officeDoneAt DateTime?
+  officeLat    Float?
+  officeLng    Float?
   createdAt  DateTime  @default(now())
 
   timeEntry TimeEntry?

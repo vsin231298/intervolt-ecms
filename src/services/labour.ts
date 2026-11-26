@@ -333,7 +333,7 @@ export async function isHelperOn(t: Tx | typeof prisma, userId: string, projectI
 export async function joinableServiceCalls(actor: Actor) {
   const open = await prisma.clockEntry.findMany({
     where: { clockOutAt: null, worker: { userId: { not: actor.id } }, project: { jobType: "SERVICE", stage: "EXECUTION" } },
-    include: { worker: { select: { name: true } }, project: { select: { id: true, number: true, name: true, location: true, siteContactName: true } } },
+    include: { worker: { select: { name: true } }, project: { select: { id: true, number: true, name: true, location: true, siteContactName: true, siteLat: true, siteLng: true } } },
     orderBy: { clockInAt: "desc" },
   });
   const map = new Map<string, { project: (typeof open)[number]["project"]; crew: string[]; since: Date }>();

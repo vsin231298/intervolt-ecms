@@ -6,6 +6,7 @@ import { fmtDate, fmtDateTime, today } from "@/lib/dates";
 import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
+import { NearbyCalls } from "@/components/NearbyCalls";
 import { assignedJobs, joinableServiceCalls, needsWorkOrder } from "@/services/labour";
 import { clockOutAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
@@ -54,19 +55,10 @@ export default async function FieldHome() {
         </details>
       ) : null}
       {worker && !open && allowServiceCalls ? (
-        <details className="card p-4" open={joinable.length > 0 && worker.helperOnly}>
-          <summary className="cursor-pointer font-semibold">Join a service call{joinable.length ? ` (${joinable.length})` : ""}</summary>
-          <p className="mt-1 text-sm text-slate-600">For when you&apos;re working with someone who already started the call. You need to be on site.</p>
-          {joinable.length === 0 ? <p className="mt-3 text-sm text-slate-500">Nobody is on a service call right now. If you got there first, use Start a service call instead.</p> : (
-            <ul className="mt-3 space-y-3">{joinable.map((j) => (
-              <li key={j.project.id} className="rounded-lg border border-slate-200 p-3">
-                <div className="font-semibold">{j.project.siteContactName ?? j.project.name}</div>
-                <div className="text-sm text-slate-600">With {j.crew.join(", ")} · since {fmtDateTime(j.since)}</div>
-                {j.project.location ? <div className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{j.project.location}</div> : null}
-                <div className="mt-2"><ClockForm action={joinServiceCallAction} projectId={j.project.id} label="Join & clock in" tone="in" /></div>
-              </li>
-            ))}</ul>
-          )}
+        <details className="card p-4" open={worker.helperOnly}>
+          <summary className="cursor-pointer font-semibold">Join a service call</summary>
+          <p className="mt-1 text-sm text-slate-600">For when you&apos;re working with someone who already started the call. Only calls near you are shown.</p>
+          <NearbyCalls within={300} action={joinServiceCallAction} calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), since: fmtDateTime(j.since), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng }))} />
         </details>
       ) : null}
       {others.length ? (

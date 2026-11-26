@@ -11,6 +11,7 @@ import { ClockForm, SignaturePad } from "@/components/FieldClient";
 import { assertFieldAccess, workerForUser } from "@/services/labour";
 import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
+import { getSetting } from "@/lib/settings";
 
 export default async function FieldJob({ params }: { params: Promise<{ projectId: string }> }) {
   const user = await requireUser("field.use");
@@ -21,6 +22,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
     redirect("/field");
   }
   const worker = await workerForUser(user.id);
+  const [geofenceOn, defaultRadius] = await Promise.all([getSetting("field.geofenceEnabled"), getSetting("field.geofenceRadiusMeters")]);
   const [p, open, docs, materials, updates, deficiencies] = await Promise.all([
     prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { client: true, projectManager: true } }),
     worker ? prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } }) : null,
@@ -62,6 +64,11 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
           : open ? <Notice tone="amber">You&apos;re clocked in on {open.project.number}. <Link className="link" href={`/field/${open.projectId}`}>Go there to clock out</Link>.</Notice>
           : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" />}
+        {worker && geofenceOn ? (
+          p.siteLat == null || p.siteLng == null
+            ? <p className="mt-2 text-xs text-amber-700">The office hasn&apos;t set this site&apos;s location yet, so clock in / out won&apos;t work. Call the office.</p>
+            : <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" /> You must be within {p.geofenceRadiusM ?? defaultRadius} m of the site to clock in or out. Your phone will ask to share your location.</p>
+        ) : null}
       </Card>
 
       <Card title="Scope & drawings">

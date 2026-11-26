@@ -11,7 +11,7 @@ function Btn({ children, className }: { children: React.ReactNode; className: st
   return <button type="submit" disabled={pending} className={className}>{pending ? "Working…" : children}</button>;
 }
 
-/** Clock in / out. Captures GPS (if the phone allows) and submits; works without location too. */
+/** Clock in / out. Captures fresh GPS and submits; the server enforces the site geofence when it is switched on. */
 export function ClockForm({ action, projectId, label, tone }: { action: Action; projectId?: string; label: string; tone: "in" | "out" }) {
   const [state, formAction] = useActionState(action, {} as ActionState);
   const ref = useRef<HTMLFormElement>(null);
@@ -20,22 +20,26 @@ export function ClockForm({ action, projectId, label, tone }: { action: Action; 
     const form = e.currentTarget;
     if (form.dataset.located === "1") return; // second pass: let it submit
     e.preventDefault();
-    const go = (lat?: number, lng?: number) => {
-      (form.elements.namedItem("lat") as HTMLInputElement).value = lat != null ? String(lat) : "";
-      (form.elements.namedItem("lng") as HTMLInputElement).value = lng != null ? String(lng) : "";
+    const go = (lat?: number, lng?: number, accuracy?: number, err?: string) => {
+      const set = (n: string, v?: number | string) => ((form.elements.namedItem(n) as HTMLInputElement).value = v != null ? String(v) : "");
+      set("lat", lat); set("lng", lng); set("accuracy", accuracy != null ? Math.round(accuracy) : undefined); set("geoError", err);
       form.dataset.located = "1";
       setLocating(false);
       form.requestSubmit();
       setTimeout(() => (form.dataset.located = ""), 500);
     };
-    if (!("geolocation" in navigator)) return go();
+    if (!("geolocation" in navigator)) return go(undefined, undefined, undefined, "unsupported");
     setLocating(true);
-    navigator.geolocation.getCurrentPosition((p) => go(p.coords.latitude, p.coords.longitude), () => go(), { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+    navigator.geolocation.getCurrentPosition(
+      (p) => go(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+      (e) => go(undefined, undefined, undefined, e.code === e.PERMISSION_DENIED ? "denied" : "unavailable"),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
   };
   return (
     <form ref={ref} action={formAction} onSubmit={submit} className="space-y-2">
       {projectId ? <input type="hidden" name="projectId" value={projectId} /> : null}
-      <input type="hidden" name="lat" /><input type="hidden" name="lng" />
+      <input type="hidden" name="lat" /><input type="hidden" name="lng" /><input type="hidden" name="accuracy" /><input type="hidden" name="geoError" />
       {tone === "out" ? <input name="notes" placeholder="Note for this shift (optional)" className="input" /> : null}
       <Btn className={tone === "in" ? "btn w-full bg-emerald-600 py-4 text-lg text-white hover:bg-emerald-700" : "btn w-full bg-red-600 py-4 text-lg text-white hover:bg-red-700"}>{locating ? "Getting location…" : label}</Btn>
       {state.error ? <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p> : null}

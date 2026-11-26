@@ -214,11 +214,21 @@ describe("Scenario 3: full project lifecycle, tender to closeout", () => {
     expect(res.created).toBe(2);
     const { jobs } = await labour.assignedJobs(elec);
     expect(jobs.map((j) => j.project.id)).toContain(projectId);
-    await labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 });
-    await expect(labour.clockIn(elec, projectId)).rejects.toThrow(/still clocked in/);
+    // geofence: no site pin yet → blocked
+    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/site location .* hasn't been set/);
+    await expect(projects.setSiteLocation(elec, projectId, { lat: 43.65, lng: -79.38 }, null)).rejects.toThrow(/permission/);
+    await expect(projects.setSiteLocation(pm, projectId, { lat: 43.65, lng: -79.38 }, 3)).rejects.toThrow(/between 10 and 5000/);
+    await projects.setSiteLocation(pm, projectId, { lat: 43.65, lng: -79.38 }, null);
+    await expect(labour.clockIn(elec, projectId)).rejects.toThrow(/couldn't get your location.*50 m/);
+    await expect(labour.clockIn(elec, projectId, { error: "denied" })).rejects.toThrow(/Location is blocked/);
+    await expect(labour.clockIn(elec, projectId, { lat: 43.66, lng: -79.38 })).rejects.toThrow(/You're 1\.1 km from .* Move within 50 m/);
+    await expect(labour.clockIn(elec, projectId, { lat: 43.6505, lng: -79.38 })).rejects.toThrow(/56 m/);
+    await labour.clockIn(elec, projectId, { lat: 43.6503, lng: -79.38 }); // ~33 m away: allowed
+    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/still clocked in/);
     // backdate clock-in by 9.5h to simulate a full day
     await prisma.clockEntry.updateMany({ where: { clockOutAt: null }, data: { clockInAt: new Date(Date.now() - 9.5 * 3_600_000) } });
-    const out = await labour.clockOut(elec, {}, "Rough-in level 3");
+    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.4 }, "left early")).rejects.toThrow(/Move within 50 m of the site to clock out/);
+    const out = await labour.clockOut(elec, { lat: 43.65, lng: -79.3801 }, "Rough-in level 3");
     expect(out.regular).toBe(8);
     expect(out.overtime).toBe(1.5);
     await labour.addTimeEntry(sup, projectId, { workerId: w2.id, date: today(), regularHours: 8, overtimeHours: 0 });
@@ -366,9 +376,20 @@ describe("Scenario 4: service work order from the field", () => {
     await expect(labour.clockIn(elec, job.id)).rejects.toThrow(/not assigned/);
     const w = await prisma.worker.findFirstOrThrow({ where: { userId: elec.id } });
     await labour.scheduleWorkers(pm, job.id, { workerIds: [w.id], fromDate: today(), toDate: today(), hours: 2, includeWeekends: true });
-    await labour.clockIn(elec, job.id);
+    // per-job range override: 200 m
+    await projects.setSiteLocation(pm, job.id, { lat: 43.7, lng: -79.4 }, 200);
+    await labour.clockIn(elec, job.id, { lat: 43.7015, lng: -79.4 }); // ~167 m
     await labour.completeWorkOrder(elec, job.id, { workSummary: "Replaced 15A breaker, tested circuit", markedComplete: true, customerName: "J. Doe", signatureDataUrl: "data:image/png;base64," + Buffer.alloc(600, 7).toString("base64") });
+    // left without clocking out → office closes it (no geofence), audited
+    const openClock = await prisma.clockEntry.findFirstOrThrow({ where: { clockOutAt: null, projectId: job.id } });
+    await expect(labour.officeClockOut(elec, openClock.id)).rejects.toThrow(/permission/);
+    await labour.officeClockOut(pm, openClock.id);
+    expect(await prisma.auditLog.count({ where: { action: "clock.out", entityId: openClock.id, summary: { contains: "by " } } })).toBe(1);
+    // geofence can be switched off in settings
+    await admin.saveSettings(adminU, { "field.geofenceEnabled": false });
+    await labour.clockIn(elec, job.id);
     await labour.clockOut(elec);
+    await admin.saveSettings(adminU, { "field.geofenceEnabled": true });
     const signoff = await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: job.id } });
     expect(signoff.signatureDocId).toBeTruthy();
     const inv = await billing.createManualInvoice(acct, job.id, { description: "Service call — 2 hrs + breaker", invoiceDate: today(), amount: 285, applyHoldback: false, isFinal: true });

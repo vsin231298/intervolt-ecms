@@ -342,6 +342,11 @@ model Project {
   name               String
   description        String?
   location           String?
+  /// Site pin for field clock-in/out geofence (decimal degrees).
+  siteLat            Float?
+  siteLng            Float?
+  /// Optional per-job clock-in radius in metres; falls back to the field.geofenceRadiusMeters setting.
+  geofenceRadiusM    Int?
   clientId           String?
   client             Organization? @relation("ProjectClient", fields: [clientId], references: [id])
   consultantId       String?

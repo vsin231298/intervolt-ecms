@@ -11,7 +11,11 @@ export function parseDate(s: string | null | undefined): Date | null {
 }
 /** Today's calendar date in the company time zone, as a UTC-midnight Date. */
 export function today(): Date {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return dayOf(new Date());
+}
+/** The calendar day (company time zone) that a moment falls on. */
+export function dayOf(at: Date): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
   return parseDate(parts)!;
 }
 export function addDays(dt: Date, days: number): Date {

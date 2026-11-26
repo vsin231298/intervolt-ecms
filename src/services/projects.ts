@@ -59,6 +59,18 @@ export async function updateProjectInfo(actor: Actor, id: string, input: Partial
   });
 }
 
+/** Site pin + optional radius used by the field clock-in geofence. Pass null to clear the pin. */
+export async function setSiteLocation(actor: Actor, id: string, pin: { lat: number; lng: number } | null, radiusM: number | null) {
+  assert(radiusM == null || (Number.isInteger(radiusM) && radiusM >= 10 && radiusM <= 5000), "Range must be a whole number of metres between 10 and 5000.");
+  return tx(async (t) => {
+    const p = await loadProject(t, id);
+    requirePerm(actor, ["OPPORTUNITY", "UNDER_REVIEW", "ESTIMATING", "QUOTING", "READY_TO_SUBMIT", "SUBMITTED"].includes(p.stage) ? "leads.edit" : "project.manage");
+    const data = { siteLat: pin?.lat ?? null, siteLng: pin?.lng ?? null, geofenceRadiusM: radiusM };
+    await t.project.update({ where: { id }, data });
+    await audit(t, actor, { action: "project.siteLocation", entityType: "Project", entityId: id, projectId: id, summary: pin ? `${p.number}: clock-in site pin set to ${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}${radiusM ? ` (${radiusM} m)` : ""}` : `${p.number}: clock-in site pin cleared`, before: { siteLat: p.siteLat, siteLng: p.siteLng, geofenceRadiusM: p.geofenceRadiusM }, after: data });
+  });
+}
+
 function pick(o: Record<string, unknown>, keys: string[]) {
   return Object.fromEntries(keys.map((k) => [k, o[k]]));
 }

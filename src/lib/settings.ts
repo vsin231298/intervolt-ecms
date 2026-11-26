@@ -21,6 +21,8 @@ export const SETTING_DEFAULTS = {
   "change.markupPercent": 15,
   "labour.overtimeAfterHours": 8,
   "labour.burdenPercent": 0,
+  "field.geofenceEnabled": true,
+  "field.geofenceRadiusMeters": 50,
   "reminders.tenderDeadlineDays": [7, 3, 1],
   "reminders.quoteFollowUpDays": 3,
   "reminders.certificateExpiryDays": 30,

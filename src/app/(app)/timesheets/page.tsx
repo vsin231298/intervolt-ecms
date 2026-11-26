@@ -7,7 +7,7 @@ import { workerOptions } from "@/lib/lookups";
 import { Card, Drawer, Empty, Field, Options, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { TimeEntries } from "@/components/TimeEntries";
-import { addTimeAction } from "@/app/actions/labour";
+import { addTimeAction, officeClockOutAction } from "@/app/actions/labour";
 import { fmtDateTime } from "@/lib/dates";
 
 export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string; worker?: string; job?: string; filter?: string }> }) {
@@ -74,7 +74,21 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
 
       {openClocks.length ? (
         <Card title="Currently clocked in">
-          <ul className="space-y-1 text-sm">{openClocks.map((c) => <li key={c.id}><b>{c.worker.name}</b> on {c.project.number} {c.project.name} since {fmtDateTime(c.clockInAt)}</li>)}</ul>
+          <ul className="space-y-2 text-sm">{openClocks.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span><b>{c.worker.name}</b> on {c.project.number} {c.project.name} since {fmtDateTime(c.clockInAt)}</span>
+              {can(r, "time.manage") ? (
+                <Drawer label="Clock out for them" className="btn btn-ghost btn-sm">
+                  <ActionForm action={officeClockOutAction} className="space-y-3">
+                    <input type="hidden" name="id" value={c.id} />
+                    <p className="text-sm text-slate-600">Use this when someone left site without clocking out. It skips the site range check and is recorded in the audit trail.</p>
+                    <Field label="Clock-out time (blank = now)"><input type="datetime-local" name="at" className="input" /></Field>
+                    <Submit>Clock out {c.worker.name}</Submit>
+                  </ActionForm>
+                </Drawer>
+              ) : null}
+            </li>
+          ))}</ul>
         </Card>
       ) : null}
 

@@ -8,7 +8,9 @@ import { ROLE_LABELS } from "@/lib/rbac";
 import { Card, Drawer, Empty, Field, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DocList } from "@/components/DocList";
-import { addMemberAction, assignEstimatorAction, communicationAction, removeMemberAction, setPmAction, updateInfoAction } from "@/app/actions/jobs";
+import { addMemberAction, assignEstimatorAction, communicationAction, removeMemberAction, setPmAction, siteLocationAction, updateInfoAction } from "@/app/actions/jobs";
+import { SitePinInput } from "@/components/SitePin";
+import { getSetting } from "@/lib/settings";
 
 export default async function InfoPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser("jobs.view");
@@ -17,6 +19,8 @@ export default async function InfoPage({ params }: { params: Promise<{ id: strin
   if (!p) notFound();
   const isLead = ["OPPORTUNITY", "UNDER_REVIEW", "ESTIMATING", "QUOTING", "READY_TO_SUBMIT", "SUBMITTED"].includes(p.stage);
   const canEdit = p.stage !== "CLOSED" && can(user.role, isLead ? "leads.edit" : "project.manage");
+  const [geofenceOn, defaultRadius] = await Promise.all([getSetting("field.geofenceEnabled"), getSetting("field.geofenceRadiusMeters")]);
+  const pinText = p.siteLat != null && p.siteLng != null ? `${p.siteLat.toFixed(6)}, ${p.siteLng.toFixed(6)}` : "";
   const [clients, consultants, gcs, people, pms, estimators, reviewers] = await Promise.all([
     orgOptions(["CLIENT", "GENERAL_CONTRACTOR"]), orgOptions(["CONSULTANT"]), orgOptions(["GENERAL_CONTRACTOR"]),
     userOptions(), userOptions(["PROJECT_MANAGER", "ADMIN"]), userOptions(["ESTIMATOR", "PROJECT_MANAGER", "ADMIN"]),
@@ -50,6 +54,17 @@ export default async function InfoPage({ params }: { params: Promise<{ id: strin
       </Card>
 
       <div className="space-y-6">
+        <Card title="Site location for clock in / out">
+          {!geofenceOn ? <p className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">The site range check is switched off in Admin → Settings, so the crew can clock in from anywhere.</p>
+            : !pinText ? <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">Not set. The crew can't clock in or out on this job until the site location is saved.</p>
+            : <p className="mb-3 text-sm text-slate-600">The crew can only clock in and out within {p.geofenceRadiusM ?? defaultRadius} m of this point.</p>}
+          <ActionForm action={siteLocationAction} resetOnSuccess={false} closeDetails={false} className="space-y-3">
+            <input type="hidden" name="projectId" value={id} />
+            <Field label="Site pin (latitude, longitude)"><SitePinInput defaultValue={pinText} address={p.location ?? ""} disabled={!canEdit} /></Field>
+            <Field label={`Range in metres (blank = default ${defaultRadius} m)`}><input name="radius" type="number" min={10} max={5000} step={1} defaultValue={p.geofenceRadiusM ?? ""} className="input" disabled={!canEdit} /></Field>
+            {canEdit ? <Submit>Save site location</Submit> : null}
+          </ActionForm>
+        </Card>
         <Card title="Responsibilities">
           <div className="space-y-4">
             {can(user.role, "project.manage") && !isLead ? (

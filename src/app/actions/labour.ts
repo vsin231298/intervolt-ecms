@@ -1,4 +1,5 @@
 "use server";
+import { parseDateTimeLocal } from "@/lib/dates";
 
 import { run, str, filesFrom, type ActionState } from "@/lib/action";
 import { zBool } from "@/lib/forms";
@@ -53,7 +54,8 @@ export async function resolveIssueAction(_p: ActionState, fd: FormData) {
 }
 
 // ── Field app ──
-const geo = (d: Record<string, unknown>) => ({ lat: d.lat ? Number(d.lat) : undefined, lng: d.lng ? Number(d.lng) : undefined });
+const num = (v: unknown) => (v === undefined || v === null || v === "" ? undefined : Number(v));
+const geo = (d: Record<string, unknown>) => ({ lat: num(d.lat), lng: num(d.lng), accuracy: num(d.accuracy), error: d.geoError ? String(d.geoError) : undefined });
 export async function clockInAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     await labour.clockIn(actor, str(d.projectId), geo(d));
@@ -63,6 +65,13 @@ export async function clockInAction(_p: ActionState, fd: FormData) {
 export async function clockOutAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     const r = await labour.clockOut(actor, geo(d), str(d.notes) || undefined);
+    return `Clocked out: ${r.regular} regular${r.overtime ? ` + ${r.overtime} overtime` : ""} hours recorded.`;
+  });
+}
+export async function officeClockOutAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const at = parseDateTimeLocal(str(d.at)) ?? undefined;
+    const r = await labour.officeClockOut(actor, str(d.id), at);
     return `Clocked out: ${r.regular} regular${r.overtime ? ` + ${r.overtime} overtime` : ""} hours recorded.`;
   });
 }

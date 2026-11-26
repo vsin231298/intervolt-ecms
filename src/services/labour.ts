@@ -1,15 +1,17 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma, tx, type Tx } from "@/lib/db";
 import { requirePerm, requireAny, type Actor } from "@/lib/actor";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/rbac";
 import { ForbiddenError, NotFoundError, UserError, assert } from "@/lib/errors";
 import { d, pct, round2, sum } from "@/lib/money";
-import { addDays, today } from "@/lib/dates";
+import { addDays, dayOf, today } from "@/lib/dates";
 import { zDate, zId, zNonNeg, zOptId, zOptText, zText } from "@/lib/forms";
 import { notifyUsers } from "@/lib/notify";
 import { getSetting } from "@/lib/settings";
 import { loadProject } from "./projects";
+import { distanceMeters, fmtDistance } from "@/lib/geo";
 import { uploadDocument, type UploadFile } from "./documents";
 
 // ─────────────── Workers ───────────────
@@ -201,7 +203,32 @@ export async function assertFieldAccess(actor: Actor, projectId: string) {
   if (!jobs.some((j) => j.project.id === projectId)) throw new ForbiddenError("You are not assigned to this job.");
 }
 
-export type GeoPoint = { lat?: number; lng?: number };
+export type GeoPoint = { lat?: number; lng?: number; accuracy?: number; error?: string };
+
+/**
+ * Geofence: when enabled, clock in/out only works within the job's radius of its site pin.
+ * Returns the distance (m) when checked, or null when the geofence is off.
+ */
+export async function assertOnSite(t: Tx, p: { number: string; siteLat: number | null; siteLng: number | null; geofenceRadiusM: number | null }, geo: GeoPoint, verb: "clock in" | "clock out"): Promise<number | null> {
+  if (!(await getSetting("field.geofenceEnabled", t))) return null;
+  const radius = p.geofenceRadiusM ?? Number(await getSetting("field.geofenceRadiusMeters", t));
+  if (p.siteLat == null || p.siteLng == null) {
+    throw new UserError(`The site location for ${p.number} hasn't been set yet, so you can't ${verb}. Ask the office to set it on the job's Info tab.`);
+  }
+  if (geo.lat == null || geo.lng == null || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) {
+    throw new UserError(
+      geo.error === "denied"
+        ? `Location is blocked for this site. Allow location for your browser in your phone's settings, then try again. You need to be within ${radius} m of the site to ${verb}.`
+        : `We couldn't get your location. Turn on Location on your phone and try again. You need to be within ${radius} m of the site to ${verb}.`,
+    );
+  }
+  const dist = distanceMeters({ lat: geo.lat, lng: geo.lng }, { lat: p.siteLat, lng: p.siteLng });
+  if (dist > radius) {
+    const acc = geo.accuracy && geo.accuracy > 25 ? ` Your phone's GPS is only accurate to about ${Math.round(geo.accuracy)} m right now; stepping outside can help.` : "";
+    throw new UserError(`You're ${fmtDistance(dist)} from the ${p.number} site. Move within ${radius} m of the site to ${verb}.${acc}`);
+  }
+  return dist;
+}
 
 export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {}) {
   requirePerm(actor, "field.use");
@@ -212,8 +239,9 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
     if (open) throw new UserError(`You are still clocked in on ${open.project.number}. Clock out first.`);
     const p = await loadProject(t, projectId);
+    const dist = await assertOnSite(t, p, geo, "clock in");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}` });
+    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return c;
   });
 }
@@ -226,10 +254,32 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
     assert(worker, "Your account is not linked to a worker profile.");
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
     assert(open, "You are not clocked in.");
-    const now = new Date();
+    const dist = await assertOnSite(t, open.project, geo, "clock out");
+    return closeClock(t, actor, worker, open, geo, notes, dist != null ? ` (${fmtDistance(dist)} from site)` : "");
+  });
+}
+
+/** Office clock-out for someone who left site without clocking out (no geofence; recorded in the audit trail). */
+export async function officeClockOut(actor: Actor, clockEntryId: string, at?: Date) {
+  requirePerm(actor, "time.manage");
+  return tx(async (t) => {
+    const open = await t.clockEntry.findUnique({ where: { id: clockEntryId }, include: { project: true, worker: true } });
+    assert(open && !open.clockOutAt, "That person is no longer clocked in.");
+    const when = at ?? new Date();
+    assert(when > open.clockInAt && when <= new Date(), "Clock-out time must be after the clock-in time and not in the future.");
+    return closeClock(t, actor, open.worker, open, {}, "Clocked out by office", ` by ${actor.name}`, when);
+  });
+}
+
+type OpenClock = { id: string; projectId: string; clockInAt: Date; project: { number: string } };
+type ClockWorker = { id: string; name: string; regularRate: Prisma.Decimal; overtimeRate: Prisma.Decimal };
+
+async function closeClock(t: Tx, actor: Actor, worker: ClockWorker, open: OpenClock, geo: GeoPoint, notes: string | undefined, suffix: string, at?: Date) {
+  {
+    const now = at ?? new Date();
     const hours = Math.round(((now.getTime() - open.clockInAt.getTime()) / 3_600_000) * 4) / 4; // nearest 15 min
     await t.clockEntry.update({ where: { id: open.id }, data: { clockOutAt: now, outLat: geo.lat, outLng: geo.lng, notes } });
-    const day = today();
+    const day = dayOf(now);
     const existing = await t.timeEntry.findMany({ where: { workerId: worker.id, date: day } });
     const already = Number(sum(existing.map((e) => d(e.regularHours).plus(d(e.overtimeHours)))));
     const threshold = Number(await getSetting("labour.overtimeAfterHours", t));
@@ -244,9 +294,9 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
       });
       entryId = e.id;
     }
-    await audit(t, actor, { action: "clock.out", entityType: "ClockEntry", entityId: open.id, projectId: open.projectId, summary: `${worker.name} clocked out of ${open.project.number}: ${regular} reg + ${overtime} OT` });
+    await audit(t, actor, { action: "clock.out", entityType: "ClockEntry", entityId: open.id, projectId: open.projectId, summary: `${worker.name} clocked out of ${open.project.number}${suffix}: ${regular} reg + ${overtime} OT` });
     return { hours: capped, regular, overtime, timeEntryId: entryId };
-  });
+  }
 }
 
 export const fieldUpdateSchema = z.object({ kind: z.enum(["UPDATE", "ISSUE"]), message: zText(4000).pipe(z.string().min(2, "Write a message")) });

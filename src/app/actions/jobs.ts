@@ -3,6 +3,7 @@
 import { run, str, type ActionState } from "@/lib/action";
 import { zBool } from "@/lib/forms";
 import { UserError } from "@/lib/errors";
+import { parseLatLng } from "@/lib/geo";
 import * as projects from "@/services/projects";
 import * as sub from "@/services/submission";
 import { uploadDocument } from "@/services/documents";
@@ -35,6 +36,17 @@ export async function updateInfoAction(_p: ActionState, fd: FormData) {
     });
     await projects.updateProjectInfo(actor, str(d.projectId), schema.parse(d));
     return "Job details saved.";
+  });
+}
+
+export async function siteLocationAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const text = str(d.pin).trim();
+    const pin = text ? parseLatLng(text) : null;
+    if (text && !pin) throw new UserError("Enter the site location as latitude, longitude, for example 43.653200, -79.383200.");
+    const r = str(d.radius).trim();
+    await projects.setSiteLocation(actor, str(d.projectId), pin, r ? Number(r) : null);
+    return pin ? "Site location saved. Clock in / out now only works near this pin." : "Site location cleared.";
   });
 }
 

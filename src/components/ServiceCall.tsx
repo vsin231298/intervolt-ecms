@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MapPin } from "lucide-react";
 import { ClockForm } from "./FieldClient";
+import { AddressInput } from "./AddressInput";
 import { distanceMeters, fmtDistance } from "@/lib/geo";
 import type { ActionState } from "@/lib/action";
 
@@ -64,7 +65,7 @@ export function ServiceCall({ calls, coWorkers, within, joinAction, startAction,
     <div ref={formRef}>
       <ClockForm action={startAction} label="Start & clock in" tone="in" officeFirst={officeFirst}>
         <input name="customer" required placeholder="Client name" className="input" />
-        <input name="address" placeholder="Address (optional)" className="input" />
+        <AddressInput name="address" placeholder="Address (optional)" near={here} />
         <select name="helperWorkerId" defaultValue="" className="input" aria-label="Co-worker (optional)">
           <option value="">Co-worker (optional): None</option>
           {coWorkers.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}

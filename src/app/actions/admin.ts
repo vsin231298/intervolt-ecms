@@ -7,6 +7,7 @@ import { SETTING_DEFAULTS, type SettingKey } from "@/lib/settings";
 import * as admin from "@/services/admin";
 import { runScheduledJobs } from "@/services/automation";
 import { requirePerm } from "@/lib/actor";
+import { parseLatLng } from "@/lib/geo";
 
 export async function saveUserAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
@@ -78,5 +79,15 @@ export async function runJobsNowAction(_p: ActionState, fd: FormData) {
     const counts = await runScheduledJobs();
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     return `Reminders checked: ${total} new notification(s).`;
+  });
+}
+
+export async function officeLocationAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const text = str(d.pin).trim();
+    const pin = text ? parseLatLng(text) : null;
+    if (text && !pin) throw new UserError("Enter the office location as latitude, longitude, for example 43.653200, -79.383200.");
+    await admin.saveSettings(actor, { "field.officeAddress": str(d.address).trim(), "field.officePin": pin ? `${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}` : "" });
+    return pin ? "Office location saved." : "Office location cleared.";
   });
 }

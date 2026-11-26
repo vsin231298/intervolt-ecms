@@ -27,6 +27,8 @@ export const SETTING_DEFAULTS = {
   "field.allowServiceCalls": true,
   "field.requireWorkOrderBeforeClockOut": true,
   "field.helperLateFlagMinutes": 30,
+  "field.officeAddress": "102 Crockford Blvd, Toronto, ON M1R 3C3",
+  "field.officePin": "",
   "reminders.tenderDeadlineDays": [7, 3, 1],
   "reminders.quoteFollowUpDays": 3,
   "reminders.certificateExpiryDays": 30,

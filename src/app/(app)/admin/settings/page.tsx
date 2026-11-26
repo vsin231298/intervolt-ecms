@@ -2,7 +2,8 @@ import { requireUser } from "@/lib/auth";
 import { getAllSettings, SETTING_DEFAULTS, type SettingKey } from "@/lib/settings";
 import { Card, Field, Notice, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { runJobsNowAction, saveSettingsAction } from "@/app/actions/admin";
+import { officeLocationAction, runJobsNowAction, saveSettingsAction } from "@/app/actions/admin";
+import { SitePinInput } from "@/components/SitePin";
 
 const GROUPS: { title: string; note?: string; keys: { key: SettingKey; label: string; hint?: string }[] }[] = [
   { title: "Company", keys: [
@@ -66,6 +67,14 @@ export default async function SettingsPage() {
       <PageHeader title="Settings" subtitle="Business rules are configurable here; nothing is hard-coded. Changes are recorded in the audit log." actions={
         <ActionForm action={runJobsNowAction}><Submit className="btn btn-secondary">Run reminder check now</Submit></ActionForm>
       } />
+      <Card title="Office location">
+        <p className="mb-3 text-sm text-slate-600">&quot;Done at office&quot; on the phone only works within the clock-in range of this pin.</p>
+        <ActionForm action={officeLocationAction} resetOnSuccess={false} closeDetails={false} className="space-y-3">
+          <Field label="Office address"><input name="address" defaultValue={String(values["field.officeAddress"] ?? "")} className="input" /></Field>
+          <Field label="Office pin (latitude, longitude)"><SitePinInput defaultValue={String(values["field.officePin"] ?? "")} address={String(values["field.officeAddress"] ?? "")} findLabel="Find from office address" saveLabel="Save office location" /></Field>
+          <Submit>Save office location</Submit>
+        </ActionForm>
+      </Card>
       <ActionForm action={saveSettingsAction} className="space-y-6" resetOnSuccess={false}>
         {GROUPS.map((g) => (
           <Card key={g.title} title={g.title}>

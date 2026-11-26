@@ -43,6 +43,7 @@ export default async function FieldHome() {
         <div className="card space-y-3 border-amber-300 p-4">
           <div className="text-sm">Left site at {new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(dropOff.clockOutAt!)}. Tap when done at office.</div>
           <ClockForm action={doneAtOfficeAction} label="Done at office" tone="out" notes={false} office={false} />
+          <p className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" /> Must be at office.</p>
         </div>
       ) : null}
       <section>

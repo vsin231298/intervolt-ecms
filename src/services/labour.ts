@@ -13,7 +13,7 @@ import { getSetting } from "@/lib/settings";
 import { createCloseoutItems, createFolders, loadProject } from "./projects";
 import { nextWorkOrderNumber } from "@/lib/numbering";
 import { notifyRoles } from "@/lib/notify";
-import { distanceMeters, fmtDistance } from "@/lib/geo";
+import { distanceMeters, fmtDistance, parseLatLng } from "@/lib/geo";
 import { uploadDocument, type UploadFile } from "./documents";
 
 // ─────────────── Workers ───────────────
@@ -293,6 +293,14 @@ export async function doneAtOffice(actor: Actor, geo: GeoPoint = {}) {
     const now = new Date();
     const last = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockInAt: { gte: startOfDay(now) } }, orderBy: { clockInAt: "desc" }, include: { project: true } });
     assert(last && last.clockOutAt && last.toOffice && !last.officeDoneAt, "Nothing to finish.");
+    if (await getSetting("field.geofenceEnabled", t)) {
+      const office = parseLatLng(String(await getSetting("field.officePin", t) ?? ""));
+      if (!office) throw new UserError("Office not set. Call office.");
+      if (geo.lat == null || geo.lng == null || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) throw new UserError(geo.error === "denied" ? "Location blocked. Allow it in phone settings." : "Turn on location.");
+      const radius = Number(await getSetting("field.geofenceRadiusMeters", t));
+      const dist = distanceMeters({ lat: geo.lat, lng: geo.lng }, office);
+      if (dist > radius) throw new UserError(`You're ${fmtDistance(dist)} from office. Get within ${radius} m.${geo.accuracy && geo.accuracy > 25 ? ` Weak GPS (±${Math.round(geo.accuracy)} m). Step outside.` : ""}`);
+    }
     const minutes = Math.max(0, Math.round((now.getTime() - last.clockOutAt.getTime()) / 60_000));
     await t.clockEntry.update({ where: { id: last.id }, data: { officeDoneAt: now, officeLat: geo.lat, officeLng: geo.lng } });
     const e = minutes > 0 ? await paidExtra(t, actor, worker, last.projectId, now, minutes, "OFFICE", `Drive to office + drop-off ${dur(minutes)} (${hm(last.clockOutAt)} to ${hm(now)})`) : null;

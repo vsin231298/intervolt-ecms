@@ -431,9 +431,12 @@ describe("Scenario 4: service work order from the field", () => {
     await labour.clockOut(elec, { lat: 43.64, lng: -79.39, toOffice: true });
     expect((await labour.pendingOfficeDropOff(w.id))?.projectId).toBe(bakery.id);
     await prisma.clockEntry.updateMany({ where: { projectId: bakery.id }, data: { clockOutAt: new Date(Date.now() - 25 * 60_000) } });
-    expect((await labour.doneAtOffice(elec, {})).minutes).toBe(25);
+    await expect(labour.doneAtOffice(elec, { lat: 43.77, lng: -79.29 })).rejects.toThrow(/Office not set/);
+    await admin.saveSettings(adminU, { "field.officePin": "43.770000, -79.290000" });
+    await expect(labour.doneAtOffice(elec, { lat: 43.775, lng: -79.29 })).rejects.toThrow(/from office\. Get within 50 m/);
+    expect((await labour.doneAtOffice(elec, { lat: 43.7702, lng: -79.29 })).minutes).toBe(25);
     expect(await labour.pendingOfficeDropOff(w.id)).toBeNull();
-    await expect(labour.doneAtOffice(elec)).rejects.toThrow(/Nothing to finish/);
+    await expect(labour.doneAtOffice(elec, { lat: 43.77, lng: -79.29 })).rejects.toThrow(/Nothing to finish/);
     // lead + helper: helper joins a call the lead started; only the lead fills in the work order
     const helperUser = await makeUser("Hank Helper", "ELECTRICIAN");
     const hw = await labour.saveWorker(pm, null, { name: "Hank Helper", trade: "Apprentice", regularRate: 25, overtimeRate: 37.5, userId: helperUser.id, active: true });

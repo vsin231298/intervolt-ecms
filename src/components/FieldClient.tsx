@@ -103,7 +103,7 @@ export function SignaturePad({ name }: { name: string }) {
     <div>
       <canvas ref={canvas} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} className="h-40 w-full touch-none rounded-md border-2 border-dashed border-slate-300 bg-white" aria-label="Signature area" />
       <input ref={input} type="hidden" name={name} />
-      <div className="mt-1 flex justify-between text-xs text-slate-500"><span>{signed ? "Signed" : "Customer signs above"}</span><button type="button" onClick={clear} className="link">Clear</button></div>
+      <div className="mt-1 flex justify-between text-xs text-slate-500"><span>{signed ? "Signed" : "Customer signature (optional)"}</span><button type="button" onClick={clear} className="link">Clear</button></div>
     </div>
   );
 }

@@ -138,7 +138,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
           <input type="hidden" name="projectId" value={p.id} />
           <Field label="Work performed *"><textarea name="workSummary" required rows={3} className="input" /></Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="markedComplete" /> Work order is complete</label>
-          <Field label="Customer name (if signing)"><input name="customerName" className="input" /></Field>
+          <Field label="Customer name (optional, needed only if they sign)"><input name="customerName" className="input" /></Field>
           <SignaturePad name="signatureDataUrl" />
           <Submit className="btn btn-success w-full">Save</Submit>
         </ActionForm>

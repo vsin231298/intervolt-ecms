@@ -79,7 +79,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
         <Card title={`Service call crews to check (${flags.length})`}>
           <ul className="space-y-2 text-sm">{flags.map((f, i) => (
             <li key={i} className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-amber-900">
-              <span className="whitespace-nowrap font-semibold">{f.kind === "NO_HOURS" ? "No hours" : "Stayed late"}:</span>
+              <span className="whitespace-nowrap font-semibold">{f.kind === "NO_HOURS" ? "Co-worker, no hours" : "Co-worker stayed late"}:</span>
               <span>{f.text} <Link href={`/jobs/${f.projectId}/labour`} className="link">Open job</Link></span>
             </li>
           ))}</ul>

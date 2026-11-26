@@ -144,7 +144,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
       </Card>
 
       {helperHere && p.jobType === "SERVICE" ? (
-        <Card title="Work order form"><p className="text-sm text-slate-600">You&apos;re the helper on this call, so the lead hand fills in the work order. You can clock out any time while you&apos;re on site.</p></Card>
+        <Card title="Work order form"><p className="text-sm text-slate-600">You joined this call as a co-worker, so the lead hand fills in the work order. You can clock out any time while you&apos;re on site.</p></Card>
       ) : (
       <Card title="Work order form" className="scroll-mt-20" id="work-order">
         <ActionForm action={signoffAction} className="space-y-4">

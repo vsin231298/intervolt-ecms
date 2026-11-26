@@ -49,7 +49,7 @@ export function NearbyCalls({ calls, within, action }: { calls: Call[]; within: 
     <ul className="mt-3 space-y-3">{near.map((c) => (
       <li key={c.id} className="rounded-lg border border-slate-200 p-3">
         <div className="font-semibold">{c.client}</div>
-        {c.namedMe ? <div className="text-xs font-semibold text-accent-600">{c.crew} named you as their helper</div> : null}
+        {c.namedMe ? <div className="text-xs font-semibold text-accent-600">{c.crew} added you as co-worker on this call</div> : null}
         <div className="text-sm text-slate-600">With {c.crew} · since {c.since}</div>
         <div className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{c.location ? `${c.location} · ` : ""}{fmtDistance(c.dist)} away</div>
         <div className="mt-2"><ClockForm action={action} projectId={c.id} label="Join & clock in" tone="in" /></div>

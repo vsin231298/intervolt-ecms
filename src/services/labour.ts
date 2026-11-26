@@ -294,9 +294,9 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
       assert(h && h.active && h.id !== worker.id, "Pick a co-worker from the list.");
       if (h.userId) {
         await t.projectMember.upsert({ where: { projectId_userId: { projectId: p.id, userId: h.userId } }, create: { projectId: p.id, userId: h.userId, roleLabel: "Helper" }, update: {} });
-        await notifyUsers(t, [h.userId], { type: "servicecall.join", title: `${worker.name} started ${input.customer}. Tap to join when you're there.`, body: input.address ?? undefined, link: "/field", projectId: p.id }, actor.id);
+        await notifyUsers(t, [h.userId], { type: "servicecall.join", title: `Co-worker call: ${worker.name} started ${input.customer} and added you. Join when you're there.`, body: input.address ?? undefined, link: "/field", projectId: p.id }, actor.id);
       }
-      await audit(t, actor, { action: "servicecall.helper", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number}: ${worker.name} named ${h.name} as helper${h.userId ? "" : " (no field login, not notified)"}` });
+      await audit(t, actor, { action: "servicecall.helper", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number}: ${worker.name} added ${h.name} as co-worker${h.userId ? "" : " (no field login, not notified)"}` });
     }
     await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
     await createCloseoutItems(t, p.id, "SERVICE");
@@ -376,7 +376,7 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     const roleLabel = worker.helperOnly || hasTech ? "Helper" : "Service technician";
     await t.projectMember.upsert({ where: { projectId_userId: { projectId, userId: actor.id } }, create: { projectId, userId: actor.id, roleLabel }, update: {} });
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} as ${roleLabel === "Helper" ? "helper" : "technician"} with ${lead.worker.name}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
+    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} as ${roleLabel === "Helper" ? "co-worker" : "technician"} with ${lead.worker.name}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return p;
   });
 }
@@ -411,7 +411,7 @@ export async function crewFlags(from: Date, to: Date): Promise<CrewFlag[]> {
         const wid = m.user.worker?.id;
         if (m.roleLabel !== "Helper" || !wid) continue;
         if (!p.clockEntries.some((c) => c.workerId === wid)) {
-          flags.push({ kind: "NO_HOURS", projectId: p.id, number: p.number, name: p.name, text: `${m.user.name} was named as helper with ${techNames} on ${p.number} ${p.name} but never clocked in. Add their hours if they worked.` });
+          flags.push({ kind: "NO_HOURS", projectId: p.id, number: p.number, name: p.name, text: `${m.user.name} was added as co-worker with ${techNames} on ${p.number} ${p.name} but never clocked in. Add their hours if they worked.` });
         }
       }
     }

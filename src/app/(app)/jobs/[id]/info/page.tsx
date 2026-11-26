@@ -87,7 +87,7 @@ export default async function InfoPage({ params }: { params: Promise<{ id: strin
                 <ul className="divide-y divide-slate-100 text-sm">
                   {p.members.map((m) => (
                     <li key={m.id} className="flex items-center justify-between py-1.5">
-                      <span>{m.user.name} <span className="text-xs text-slate-500">· {m.roleLabel} · {ROLE_LABELS[m.user.role]}</span></span>
+                      <span>{m.user.name} <span className="text-xs text-slate-500">· {m.roleLabel === "Helper" ? "Co-worker" : m.roleLabel} · {ROLE_LABELS[m.user.role]}</span></span>
                       {can(user.role, "project.manage") ? (
                         <ActionForm action={removeMemberAction}><input type="hidden" name="projectId" value={id} /><input type="hidden" name="userId" value={m.userId} /><Submit className="btn btn-ghost btn-sm text-red-600" pendingText="…">Remove</Submit></ActionForm>
                       ) : null}

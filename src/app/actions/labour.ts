@@ -68,6 +68,12 @@ export async function clockOutAction(_p: ActionState, fd: FormData) {
     return `Clocked out: ${r.regular} regular${r.overtime ? ` + ${r.overtime} overtime` : ""} hours recorded.`;
   });
 }
+export async function startServiceCallAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const p = await labour.startServiceCall(actor, labour.serviceCallSchema.parse(d), geo(d));
+    return { message: `Service call ${p.number} started and you're clocked in.`, redirectTo: `/field/${p.id}` };
+  });
+}
 export async function officeClockOutAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     const at = parseDateTimeLocal(str(d.at)) ?? undefined;

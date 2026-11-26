@@ -390,6 +390,24 @@ describe("Scenario 4: service work order from the field", () => {
     await labour.clockIn(elec, job.id);
     await labour.clockOut(elec);
     await admin.saveSettings(adminU, { "field.geofenceEnabled": true });
+    // unplanned service call started from the phone
+    await expect(labour.startServiceCall(elec, { customer: "Corner Cafe", address: "25 King St W" }, {})).rejects.toThrow(/needs your location/);
+    const call = await labour.startServiceCall(elec, { customer: "Corner Cafe", address: "25 King St W", problem: "No power to kitchen" }, { lat: 43.6487, lng: -79.3817, accuracy: 12 });
+    expect(call.jobType).toBe("SERVICE");
+    expect(call.siteLat).toBe(43.6487);
+    expect(call.geofenceRadiusM).toBeNull();
+    expect((await labour.assignedJobs(elec)).jobs.map((j) => j.project.id)).toContain(call.id);
+    expect(await prisma.notification.count({ where: { userId: pm.id, projectId: call.id } })).toBe(1);
+    await expect(labour.startServiceCall(elec, { customer: "Other", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/still clocked in/);
+    await expect(labour.clockOut(elec, { lat: 43.66, lng: -79.3817 })).rejects.toThrow(/clock out/);
+    await labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 });
+    // weak GPS widens that call's range
+    const call2 = await labour.startServiceCall(elec, { customer: "Gas Bar", address: "9 Queen St" }, { lat: 43.65, lng: -79.39, accuracy: 120 });
+    expect(call2.geofenceRadiusM).toBe(170);
+    await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
+    await admin.saveSettings(adminU, { "field.allowServiceCalls": false });
+    await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/switched off/);
+    await admin.saveSettings(adminU, { "field.allowServiceCalls": true });
     const signoff = await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: job.id } });
     expect(signoff.signatureDocId).toBeTruthy();
     const inv = await billing.createManualInvoice(acct, job.id, { description: "Service call — 2 hrs + breaker", invoiceDate: today(), amount: 285, applyHoldback: false, isFinal: true });

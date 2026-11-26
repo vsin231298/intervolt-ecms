@@ -10,7 +10,9 @@ import { addDays, dayOf, today } from "@/lib/dates";
 import { zDate, zId, zNonNeg, zOptId, zOptText, zText } from "@/lib/forms";
 import { notifyUsers } from "@/lib/notify";
 import { getSetting } from "@/lib/settings";
-import { loadProject } from "./projects";
+import { createCloseoutItems, createFolders, loadProject } from "./projects";
+import { nextWorkOrderNumber } from "@/lib/numbering";
+import { notifyRoles } from "@/lib/notify";
 import { distanceMeters, fmtDistance } from "@/lib/geo";
 import { uploadDocument, type UploadFile } from "./documents";
 
@@ -243,6 +245,54 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return c;
+  });
+}
+
+export const serviceCallSchema = z.object({
+  customer: zText(200).pipe(z.string().min(2, "Enter the customer's name")),
+  address: zText(300).pipe(z.string().min(3, "Enter the address")),
+  phone: zOptText(50),
+  problem: zOptText(2000),
+});
+
+/**
+ * Unplanned service call started from the field app: creates a service work order, pins the site
+ * where the worker is standing, adds them to the job and clocks them in. Office is notified to complete it.
+ */
+export async function startServiceCall(actor: Actor, input: z.infer<typeof serviceCallSchema>, geo: GeoPoint) {
+  requirePerm(actor, "field.use");
+  assert(await getSetting("field.allowServiceCalls"), "Starting service calls from the field app is switched off. Call the office.");
+  if (geo.lat == null || geo.lng == null || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) {
+    throw new UserError(geo.error === "denied"
+      ? "Location is blocked for this site. Allow location for your browser in your phone's settings, then try again. A service call needs your location."
+      : "We couldn't get your location. Turn on Location on your phone and try again. A service call needs your location.");
+  }
+  return tx(async (t) => {
+    const worker = await workerForUser(actor.id, t);
+    assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
+    const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
+    if (open) throw new UserError(`You are still clocked in on ${open.project.number}. Clock out first.`);
+    const base = Number(await getSetting("field.geofenceRadiusMeters", t));
+    // Weak GPS at the start would make the pin unreliable; widen this job's range to cover it (max 500 m).
+    const radius = geo.accuracy && geo.accuracy > base / 2 ? Math.min(500, Math.ceil(base + geo.accuracy)) : null;
+    const number = await nextWorkOrderNumber(t);
+    const p = await t.project.create({
+      data: {
+        number, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
+        name: `Service call: ${input.customer}`.slice(0, 200), location: input.address, siteContactName: input.customer, siteContactPhone: input.phone,
+        scope: input.problem, description: `Started from the field app by ${worker.name}. Office to complete client, pricing and PM.`,
+        siteLat: geo.lat, siteLng: geo.lng, geofenceRadiusM: radius,
+      },
+    });
+    await t.stageHistory.create({ data: { projectId: p.id, toStage: "EXECUTION", byId: actor.id, note: "Service call started from the field app" } });
+    await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: "Service technician" } });
+    await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
+    await createCloseoutItems(t, p.id, "SERVICE");
+    const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId: p.id, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} service call started on site by ${worker.name}: ${input.customer}, ${input.address}`, after: { ...input, siteLat: geo.lat, siteLng: geo.lng, accuracy: geo.accuracy } });
+    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId: p.id, summary: `${worker.name} clocked in on ${number} (service call start)` });
+    await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], { type: "job.assigned", title: `${worker.name} started service call ${number}: ${input.customer}`, body: `${input.address}${input.problem ? ` · ${input.problem.slice(0, 140)}` : ""}. Add the client, PM and pricing.`, link: `/jobs/${p.id}`, projectId: p.id }, actor.id);
+    return p;
   });
 }
 

@@ -23,6 +23,7 @@ export const SETTING_DEFAULTS = {
   "labour.burdenPercent": 0,
   "field.geofenceEnabled": true,
   "field.geofenceRadiusMeters": 50,
+  "field.allowServiceCalls": true,
   "reminders.tenderDeadlineDays": [7, 3, 1],
   "reminders.quoteFollowUpDays": 3,
   "reminders.certificateExpiryDays": 30,

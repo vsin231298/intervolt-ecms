@@ -12,7 +12,7 @@ function Btn({ children, className }: { children: React.ReactNode; className: st
 }
 
 /** Clock in / out. Captures fresh GPS and submits; the server enforces the site geofence when it is switched on. */
-export function ClockForm({ action, projectId, label, tone }: { action: Action; projectId?: string; label: string; tone: "in" | "out" }) {
+export function ClockForm({ action, projectId, label, tone, children }: { action: Action; projectId?: string; label: string; tone: "in" | "out"; children?: React.ReactNode }) {
   const [state, formAction] = useActionState(action, {} as ActionState);
   const ref = useRef<HTMLFormElement>(null);
   const [locating, setLocating] = useState(false);
@@ -40,6 +40,7 @@ export function ClockForm({ action, projectId, label, tone }: { action: Action; 
     <form ref={ref} action={formAction} onSubmit={submit} className="space-y-2">
       {projectId ? <input type="hidden" name="projectId" value={projectId} /> : null}
       <input type="hidden" name="lat" /><input type="hidden" name="lng" /><input type="hidden" name="accuracy" /><input type="hidden" name="geoError" />
+      {children}
       {tone === "out" ? <input name="notes" placeholder="Note for this shift (optional)" className="input" /> : null}
       <Btn className={tone === "in" ? "btn w-full bg-emerald-600 py-4 text-lg text-white hover:bg-emerald-700" : "btn w-full bg-red-600 py-4 text-lg text-white hover:bg-red-700"}>{locating ? "Getting location…" : label}</Btn>
       {state.error ? <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p> : null}

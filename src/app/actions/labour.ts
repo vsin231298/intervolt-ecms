@@ -9,7 +9,7 @@ import { uploadDocument } from "@/services/documents";
 
 export async function saveWorkerAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
-    const w = await labour.saveWorker(actor, str(d.workerId) || null, labour.workerSchema.parse({ ...d, active: d.workerId ? zBool.parse(d.active ?? "") : true, helperOnly: zBool.parse(d.helperOnly ?? "") }));
+    const w = await labour.saveWorker(actor, str(d.workerId) || null, labour.workerSchema.parse({ ...d, active: d.workerId ? zBool.parse(d.active ?? "") : true, }));
     return d.workerId ? "Employee saved." : { redirectTo: `/people/${w.id}` };
   });
 }
@@ -64,7 +64,7 @@ export async function clockInAction(_p: ActionState, fd: FormData) {
 }
 export async function clockOutAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
-    const r = await labour.clockOut(actor, geo(d), str(d.notes) || undefined);
+    const r = await labour.clockOut(actor, geo(d), str(d.notes) || undefined, str(d.handLeadTo) || undefined);
     return `Clocked out: ${r.regular} regular${r.overtime ? ` + ${r.overtime} overtime` : ""} hours recorded.`;
   });
 }
@@ -72,6 +72,12 @@ export async function startServiceCallAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     const p = await labour.startServiceCall(actor, labour.serviceCallSchema.parse(d), geo(d));
     return { message: `Service call ${p.number} started and you're clocked in.`, redirectTo: `/field/${p.id}` };
+  });
+}
+export async function takeOverLeadAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    await labour.takeOverLead(actor, str(d.projectId));
+    return "You're lead now.";
   });
 }
 export async function officeClockOutAction(_p: ActionState, fd: FormData) {

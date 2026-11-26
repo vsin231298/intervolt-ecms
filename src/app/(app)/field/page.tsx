@@ -6,7 +6,7 @@ import { fmtDate, fmtDateTime, today } from "@/lib/dates";
 import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
-import { NearbyCalls } from "@/components/NearbyCalls";
+import { ServiceCall } from "@/components/ServiceCall";
 import { assignedJobs, joinableServiceCalls, needsWorkOrder } from "@/services/labour";
 import { clockOutAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
@@ -28,12 +28,12 @@ export default async function FieldHome() {
         <h1 className="text-xl font-semibold">Hi {user.name.split(" ")[0]}</h1>
         <p className="text-sm text-slate-500">{fmtDate(today())}{todayHours && (Number(todayHours._sum.regularHours ?? 0) + Number(todayHours._sum.overtimeHours ?? 0)) > 0 ? ` · ${Number(todayHours._sum.regularHours ?? 0) + Number(todayHours._sum.overtimeHours ?? 0)} h recorded today` : ""}</p>
       </div>
-      {!worker ? <Notice tone="amber">Your login isn&apos;t linked to an employee profile yet, so you can&apos;t clock in. Ask the office to link it under Employees.</Notice> : null}
+      {!worker ? <Notice tone="amber">Login not linked to an employee. Call office.</Notice> : null}
       {open ? (
         <div className="card space-y-3 border-emerald-300 p-4">
           <div className="text-sm">Clocked in on <Link className="link font-semibold" href={`/field/${open.projectId}`}>{open.project.number} {open.project.name}</Link> since {fmtDateTime(open.clockInAt)}</div>
           {woMissing
-            ? <Link href={`/field/${open.projectId}#work-order`} className="btn w-full bg-amber-500 py-4 text-lg text-white hover:bg-amber-600">Fill in work order to clock out</Link>
+            ? <Link href={`/field/${open.projectId}#clock`} className="btn w-full bg-amber-500 py-4 text-lg text-white hover:bg-amber-600">Fill work order</Link>
             : <ClockForm action={clockOutAction} label="Clock out" tone="out" />}
         </div>
       ) : null}
@@ -45,26 +45,10 @@ export default async function FieldHome() {
       </section>
       {worker && !open && allowServiceCalls ? (
         <details className="card p-4">
-          <summary className="cursor-pointer font-semibold">Start a service call</summary>
-          <p className="mt-1 text-sm text-slate-600">Do this once you&apos;re on site. Where you&apos;re standing becomes the site, and you&apos;ll need to be within range of it to clock out.</p>
-          <div className="mt-3">
-            <ClockForm action={startServiceCallAction} label="Start call & clock in" tone="in">
-              <input name="customer" required placeholder="Client name *" className="input" />
-              <input name="address" placeholder="Address (optional)" className="input" />
-              <label className="block text-sm font-medium text-slate-700">Who&apos;s with you? (optional)
-              <select name="helperWorkerId" defaultValue="" className="input mt-1">
-                <option value="">Nobody, I&apos;m on my own</option>
-                {crewChoices.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select></label>
-            </ClockForm>
-          </div>
-        </details>
-      ) : null}
-      {worker && !open && allowServiceCalls ? (
-        <details className="card p-4" open={worker.helperOnly}>
-          <summary className="cursor-pointer font-semibold">Join a service call</summary>
-          <p className="mt-1 text-sm text-slate-600">For when you&apos;re working with someone who already started the call. Only calls near you are shown.</p>
-          <NearbyCalls within={300} action={joinServiceCallAction} calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), since: fmtDateTime(j.since), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng, namedMe: j.namedMe }))} />
+          <summary className="cursor-pointer font-semibold">Service call</summary>
+          <p className="mb-3 mt-1 text-sm text-slate-500">Tap when on site.</p>
+          <ServiceCall within={300} joinAction={joinServiceCallAction} startAction={startServiceCallAction} coWorkers={crewChoices}
+            calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng, namedMe: j.namedMe }))} />
         </details>
       ) : null}
       {others.length ? (

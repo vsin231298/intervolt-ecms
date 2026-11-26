@@ -347,6 +347,8 @@ model Project {
   siteLng            Float?
   /// Optional per-job clock-in radius in metres; falls back to the field.geofenceRadiusMeters setting.
   geofenceRadiusM    Int?
+  /// Service calls: the user who leads this call and owes the work order (starter, or whoever took over).
+  serviceLeadUserId  String?
   clientId           String?
   client             Organization? @relation("ProjectClient", fields: [clientId], references: [id])
   consultantId       String?
@@ -926,8 +928,6 @@ model Worker {
   regularRate  Decimal  @db.Decimal(10, 2)
   overtimeRate Decimal  @db.Decimal(10, 2)
   active       Boolean  @default(true)
-  /// Helper / apprentice: can only join service calls started by someone else (no work order form).
-  helperOnly   Boolean  @default(false)
   userId       String?  @unique
   user         User?    @relation(fields: [userId], references: [id])
   createdAt    DateTime @default(now())

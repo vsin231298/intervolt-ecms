@@ -8,9 +8,9 @@ import { qty } from "@/lib/money";
 import { Badge, Card, Field, Notice, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { ClockForm, SignaturePad } from "@/components/FieldClient";
-import { JOB_STATUSES, assertFieldAccess, isHelperOn, needsWorkOrder, workerForUser } from "@/services/labour";
+import { JOB_STATUSES, assertFieldAccess, needsWorkOrder, workerForUser } from "@/services/labour";
 import { MaterialRows } from "@/components/MaterialRows";
-import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction } from "@/app/actions/labour";
+import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction, takeOverLeadAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
 import { getSetting } from "@/lib/settings";
 
@@ -26,7 +26,15 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
   const [geofenceOn, defaultRadius] = await Promise.all([getSetting("field.geofenceEnabled"), getSetting("field.geofenceRadiusMeters")]);
   const openHere = worker ? await prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null, projectId }, include: { project: true } }) : null;
   const woMissing = openHere ? await needsWorkOrder(prisma, user.id, openHere) : false;
-  const helperHere = await isHelperOn(prisma, user.id, projectId);
+  // Service call crew: who's on the call now, and who leads it.
+  const onCall = await prisma.clockEntry.findMany({ where: { projectId, clockOutAt: null }, select: { worker: { select: { name: true, userId: true } } } });
+  const leadRow = await prisma.project.findUnique({ where: { id: projectId }, select: { serviceLeadUserId: true, jobType: true } });
+  const isService = leadRow?.jobType === "SERVICE";
+  const leadId = leadRow?.serviceLeadUserId ?? null;
+  const iAmLead = !!openHere && leadId === user.id;
+  const leadName = onCall.find((c) => c.worker.userId === leadId)?.worker.name ?? (leadId === user.id ? user.name : null);
+  const othersOnCall = onCall.filter((c) => c.worker.userId && c.worker.userId !== user.id);
+  const withLead = onCall.filter((c) => c.worker.userId !== leadId);
   // Co-workers: everyone else on this job's clock today (ticked by default), plus all active employees to pick from.
   const sinceToday = new Date(Date.now() - 16 * 3_600_000);
   const [crewClocks, allWorkers] = await Promise.all([
@@ -71,16 +79,37 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
         </div>
       </Card>
 
-      <Card>
-        {!worker ? <Notice tone="amber">Your login isn&apos;t linked to an employee profile, so you can&apos;t clock in.</Notice>
-          : here && woMissing ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><Notice tone="amber">Before you clock out, fill in the <a href="#work-order" className="link font-semibold">work order form</a> below. The Clock out button appears once it&apos;s saved.</Notice></>
+      <Card id="clock" className="scroll-mt-20">
+        {isService && openHere && leadName ? (
+          <div className="mb-3 flex items-center justify-between gap-2 text-sm">
+            <span>Lead: <b>{leadName}</b>{withLead.length ? <span className="text-slate-500"> · with {withLead.map((c) => c.worker.name).join(", ")}</span> : null}</span>
+            {!iAmLead ? <ActionForm action={takeOverLeadAction} showSuccess={false}><input type="hidden" name="projectId" value={p.id} /><Submit className="btn btn-secondary btn-sm" pendingText="…">Take over as lead</Submit></ActionForm> : null}
+          </div>
+        ) : null}
+        {!worker ? <Notice tone="amber">Login not linked to an employee. Call office.</Notice>
+          : here && woMissing ? (
+            <>
+              <div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div>
+              <a href="#work-order" className="btn w-full bg-amber-500 py-4 text-lg text-white hover:bg-amber-600">Fill work order</a>
+              {iAmLead && othersOnCall.length ? (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <p className="mb-2 text-sm text-slate-600">Leaving before the job&apos;s done?</p>
+                  {othersOnCall.map((c) => (
+                    <ClockForm key={c.worker.userId} action={clockOutAction} label={`Hand lead to ${c.worker.name.split(" ")[0]} & clock out`} tone="out" notes={false}>
+                      <input type="hidden" name="handLeadTo" value={c.worker.userId!} />
+                    </ClockForm>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
-          : open ? <Notice tone="amber">You&apos;re clocked in on {open.project.number}. <Link className="link" href={`/field/${open.projectId}`}>Go there to clock out</Link>.</Notice>
+          : open ? <Notice tone="amber">Clock out of {open.project.number} first. <Link className="link" href={`/field/${open.projectId}`}>Go there</Link></Notice>
           : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" />}
         {worker && geofenceOn ? (
           p.siteLat == null || p.siteLng == null
-            ? <p className="mt-2 text-xs text-amber-700">The office hasn&apos;t set this site&apos;s location yet, so clock in / out won&apos;t work. Call the office.</p>
-            : <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" /> You must be within {p.geofenceRadiusM ?? defaultRadius} m of the site to clock in or out. Your phone will ask to share your location.</p>
+            ? <p className="mt-2 text-xs text-amber-700">Site not set. Call office.</p>
+            : <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" /> Must be within {p.geofenceRadiusM ?? defaultRadius} m.</p>
         ) : null}
       </Card>
 
@@ -143,32 +172,32 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
         {updates.length ? <ul className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-500">{updates.map((u) => <li key={u.id}>{fmtDateTime(u.createdAt)} · {u.kind === "ISSUE" ? (u.resolvedAt ? "issue (resolved)" : "issue") : "update"}: {u.message.slice(0, 80)}</li>)}</ul> : null}
       </Card>
 
-      {helperHere && p.jobType === "SERVICE" ? (
-        <Card title="Work order form"><p className="text-sm text-slate-600">You joined this call as a co-worker, so the lead hand fills in the work order. You can clock out any time while you&apos;re on site.</p></Card>
+      {isService && openHere && !iAmLead ? (
+        <Card title="Work order"><p className="text-sm text-slate-600">{leadName ?? "Lead"} fills this.</p></Card>
       ) : (
-      <Card title="Work order form" className="scroll-mt-20" id="work-order">
+      <Card title="Work order" className="scroll-mt-20" id="work-order">
         <ActionForm action={signoffAction} className="space-y-4">
           <input type="hidden" name="projectId" value={p.id} />
-          <Field label="Work description *"><textarea name="workSummary" required rows={3} placeholder="What you found and what you did" className="input" /></Field>
-          <Field label="Co-worker(s) on this job">
+          <Field label="Work description"><textarea name="workSummary" required rows={3} placeholder="What was done" className="input" /></Field>
+          <Field label="Co-worker(s)">
             {coWorkers.length === 0 ? <p className="text-sm text-slate-500">No other employees set up.</p> : (
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-200 p-2">{coWorkers.map((w) => (
-                <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="coWorkerIds" value={w.id} defaultChecked={crewIds.has(w.id)} /> {w.name}{crewIds.has(w.id) ? <span className="text-xs text-emerald-700">on this job today</span> : null}</label>
+                <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="coWorkerIds" value={w.id} defaultChecked={crewIds.has(w.id)} /> {w.name}{crewIds.has(w.id) ? <span className="text-xs text-emerald-700">on call</span> : null}</label>
               ))}</div>
             )}
           </Field>
           <Field label="Materials used"><MaterialRows suggestions={materials.map((m) => m.description)} /></Field>
-          <Field label="Job status *">
+          <Field label="Job status">
             <select name="jobStatus" required defaultValue="" className="input">
               <option value="" disabled>Choose…</option>
               {Object.entries(JOB_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Parking ticket $ (if any)"><input name="parkingAmount" inputMode="decimal" placeholder="0.00" className="input" /></Field>
-            <Field label="Receipt photo"><input type="file" name="parkingReceipt" accept="image/*,application/pdf" capture="environment" className="block w-full text-xs" /></Field>
+            <Field label="Parking $"><input name="parkingAmount" inputMode="decimal" placeholder="0.00" className="input" /></Field>
+            <Field label="Receipt"><input type="file" name="parkingReceipt" accept="image/*,application/pdf" capture="environment" className="block w-full text-xs" /></Field>
           </div>
-          <Field label="Customer name (optional, needed only if they sign)"><input name="customerName" className="input" /></Field>
+          <Field label="Customer name"><input name="customerName" className="input" /></Field>
           <SignaturePad name="signatureDataUrl" />
           <Submit className="btn btn-success w-full">Save work order</Submit>
         </ActionForm>

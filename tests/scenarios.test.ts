@@ -215,19 +215,19 @@ describe("Scenario 3: full project lifecycle, tender to closeout", () => {
     const { jobs } = await labour.assignedJobs(elec);
     expect(jobs.map((j) => j.project.id)).toContain(projectId);
     // geofence: no site pin yet → blocked
-    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/site location .* hasn't been set/);
+    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/Site not set/);
     await expect(projects.setSiteLocation(elec, projectId, { lat: 43.65, lng: -79.38 }, null)).rejects.toThrow(/permission/);
     await expect(projects.setSiteLocation(pm, projectId, { lat: 43.65, lng: -79.38 }, 3)).rejects.toThrow(/between 10 and 5000/);
     await projects.setSiteLocation(pm, projectId, { lat: 43.65, lng: -79.38 }, null);
-    await expect(labour.clockIn(elec, projectId)).rejects.toThrow(/couldn't get your location.*50 m/);
-    await expect(labour.clockIn(elec, projectId, { error: "denied" })).rejects.toThrow(/Location is blocked/);
-    await expect(labour.clockIn(elec, projectId, { lat: 43.66, lng: -79.38 })).rejects.toThrow(/You're 1\.1 km from .* Move within 50 m/);
+    await expect(labour.clockIn(elec, projectId)).rejects.toThrow(/Turn on location/);
+    await expect(labour.clockIn(elec, projectId, { error: "denied" })).rejects.toThrow(/Location blocked/);
+    await expect(labour.clockIn(elec, projectId, { lat: 43.66, lng: -79.38 })).rejects.toThrow(/You're 1\.1 km away\. Get within 50 m/);
     await expect(labour.clockIn(elec, projectId, { lat: 43.6505, lng: -79.38 })).rejects.toThrow(/56 m/);
     await labour.clockIn(elec, projectId, { lat: 43.6503, lng: -79.38 }); // ~33 m away: allowed
-    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/still clocked in/);
+    await expect(labour.clockIn(elec, projectId, { lat: 43.65, lng: -79.38 })).rejects.toThrow(/Clock out of .* first/);
     // backdate clock-in by 9.5h to simulate a full day
     await prisma.clockEntry.updateMany({ where: { clockOutAt: null }, data: { clockInAt: new Date(Date.now() - 9.5 * 3_600_000) } });
-    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.4 }, "left early")).rejects.toThrow(/Move within 50 m of the site to clock out/);
+    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.4 }, "left early")).rejects.toThrow(/Get within 50 m/);
     const out = await labour.clockOut(elec, { lat: 43.65, lng: -79.3801 }, "Rough-in level 3");
     expect(out.regular).toBe(8);
     expect(out.overtime).toBe(1.5);
@@ -388,21 +388,21 @@ describe("Scenario 4: service work order from the field", () => {
     // geofence can be switched off in settings
     await admin.saveSettings(adminU, { "field.geofenceEnabled": false });
     await labour.clockIn(elec, job.id);
-    await expect(labour.clockOut(elec)).rejects.toThrow(/work order form/);
+    await expect(labour.clockOut(elec)).rejects.toThrow(/Fill work order first/);
     await labour.completeWorkOrder(elec, job.id, { workSummary: "Return visit: labelled panel", markedComplete: false });
     await labour.clockOut(elec);
     await admin.saveSettings(adminU, { "field.geofenceEnabled": true });
     // unplanned service call started from the phone
-    await expect(labour.startServiceCall(elec, { customer: "Corner Cafe", address: "25 King St W" }, {})).rejects.toThrow(/needs your location/);
+    await expect(labour.startServiceCall(elec, { customer: "Corner Cafe", address: "25 King St W" }, {})).rejects.toThrow(/Turn on location/);
     const call = await labour.startServiceCall(elec, { customer: "Corner Cafe", address: "25 King St W", problem: "No power to kitchen" }, { lat: 43.6487, lng: -79.3817, accuracy: 12 });
     expect(call.jobType).toBe("SERVICE");
     expect(call.siteLat).toBe(43.6487);
     expect(call.geofenceRadiusM).toBeNull();
     expect((await labour.assignedJobs(elec)).jobs.map((j) => j.project.id)).toContain(call.id);
     expect(await prisma.notification.count({ where: { userId: pm.id, projectId: call.id } })).toBe(1);
-    await expect(labour.startServiceCall(elec, { customer: "Other", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/still clocked in/);
-    await expect(labour.clockOut(elec, { lat: 43.66, lng: -79.3817 })).rejects.toThrow(/Move within/);
-    await expect(labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 })).rejects.toThrow(/Fill in the work order form/);
+    await expect(labour.startServiceCall(elec, { customer: "Other", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/Clock out of/);
+    await expect(labour.clockOut(elec, { lat: 43.66, lng: -79.3817 })).rejects.toThrow(/Get within/);
+    await expect(labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 })).rejects.toThrow(/Fill work order first/);
     await labour.completeWorkOrder(elec, call.id, { workSummary: "Reset GFCI, replaced 20A breaker", markedComplete: true });
     expect(await prisma.notification.count({ where: { userId: pm.id, type: "workorder.signoff", projectId: call.id } })).toBe(1);
     await labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 });
@@ -414,15 +414,14 @@ describe("Scenario 4: service work order from the field", () => {
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });
     // lead + helper: helper joins a call the lead started; only the lead fills in the work order
     const helperUser = await makeUser("Hank Helper", "ELECTRICIAN");
-    const hw = await labour.saveWorker(pm, null, { name: "Hank Helper", trade: "Apprentice", regularRate: 25, overtimeRate: 37.5, userId: helperUser.id, active: true, helperOnly: true });
-    expect(hw.helperOnly).toBe(true);
+    const hw = await labour.saveWorker(pm, null, { name: "Hank Helper", trade: "Apprentice", regularRate: 25, overtimeRate: 37.5, userId: helperUser.id, active: true });
     const call3 = await labour.startServiceCall(elec, { customer: "Bakery" }, { lat: 43.7, lng: -79.5, accuracy: 8 });
     expect(call3.location).toBeNull();
     expect((await labour.joinableServiceCalls(helperUser)).map((j) => j.project.id)).toContain(call3.id);
-    await expect(labour.joinServiceCall(helperUser, call3.id, { lat: 43.71, lng: -79.5 })).rejects.toThrow(/Move within 50 m/);
+    await expect(labour.joinServiceCall(helperUser, call3.id, { lat: 43.71, lng: -79.5 })).rejects.toThrow(/Get within 50 m/);
     await labour.joinServiceCall(helperUser, call3.id, { lat: 43.7001, lng: -79.5 });
     await labour.clockOut(helperUser, { lat: 43.7001, lng: -79.5 }); // helper: no work order needed
-    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.5 })).rejects.toThrow(/work order form/);
+    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.5 })).rejects.toThrow(/Fill work order first/);
     await labour.completeWorkOrder(elec, call3.id, { workSummary: "Replaced GFCI in kitchen", markedComplete: false, jobStatus: "RETURN_VISIT", coWorkerIds: [hw.id], materialsUsed: [{ item: "GFCI 15A", quantity: "2" }], parkingAmount: 12.5 }, file("receipt.jpg", "image/jpeg"));
     const so = await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: call3.id } });
     expect(so.markedComplete).toBe(false);
@@ -430,11 +429,16 @@ describe("Scenario 4: service work order from the field", () => {
     expect(Number(so.parkingAmount)).toBe(12.5);
     expect(so.parkingReceiptDocId).toBeTruthy();
     await labour.clockOut(elec, { lat: 43.7, lng: -79.5 });
-    // helper gets there first and starts it; journeyman joins as technician and owes the work order
+    // co-worker gets there first and starts it (he's lead); journeyman joins and takes over as lead
     const call4 = await labour.startServiceCall(helperUser, { customer: "Dentist" }, { lat: 43.71, lng: -79.51 });
+    expect(call4.serviceLeadUserId).toBe(helperUser.id);
     await labour.joinServiceCall(elec, call4.id, { lat: 43.71, lng: -79.51 });
-    await expect(labour.clockOut(elec, { lat: 43.71, lng: -79.51 })).rejects.toThrow(/work order form/);
-    await labour.clockOut(helperUser, { lat: 43.71, lng: -79.51 });
+    expect((await prisma.project.findUniqueOrThrow({ where: { id: call4.id } })).serviceLeadUserId).toBe(helperUser.id);
+    await labour.takeOverLead(elec, call4.id);
+    expect((await prisma.project.findUniqueOrThrow({ where: { id: call4.id } })).serviceLeadUserId).toBe(elec.id);
+    expect(await prisma.notification.count({ where: { userId: helperUser.id, type: "servicecall.lead", projectId: call4.id } })).toBe(1);
+    await expect(labour.clockOut(elec, { lat: 43.71, lng: -79.51 })).rejects.toThrow(/Fill work order first/);
+    await labour.clockOut(helperUser, { lat: 43.71, lng: -79.51 }); // no longer lead: no work order
     await labour.completeWorkOrder(elec, call4.id, { workSummary: "Fixed light", markedComplete: false, jobStatus: "COMPLETE" });
     await labour.clockOut(elec, { lat: 43.71, lng: -79.51 });
     expect((await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: call4.id } })).markedComplete).toBe(true);
@@ -443,7 +447,7 @@ describe("Scenario 4: service work order from the field", () => {
     expect(await prisma.notification.count({ where: { userId: helperUser.id, type: "servicecall.join", projectId: call5.id } })).toBe(1);
     const j5 = (await labour.joinableServiceCalls(helperUser)).find((j) => j.project.id === call5.id);
     expect(j5?.namedMe).toBe(true);
-    await expect(labour.joinServiceCall(helperUser, call5.id, { lat: 43.78, lng: -79.52 })).rejects.toThrow(/km from/);
+    await expect(labour.joinServiceCall(helperUser, call5.id, { lat: 43.78, lng: -79.52 })).rejects.toThrow(/km away/);
     // journeyman finishes; helper never shows up → office flag
     await labour.completeWorkOrder(elec, call5.id, { workSummary: "Done alone", markedComplete: false, jobStatus: "COMPLETE" });
     await labour.clockOut(elec, { lat: 43.72, lng: -79.52 });
@@ -458,10 +462,24 @@ describe("Scenario 4: service work order from the field", () => {
     await prisma.clockEntry.updateMany({ where: { projectId: call6.id }, data: { clockInAt: new Date(Date.now() - 3 * 3600000) } });
     await labour.clockOut(helperUser, { lat: 43.73, lng: -79.53 });
     flags = await labour.crewFlags(addDays(today(), -1), today());
-    expect(flags.find((f) => f.kind === "STAYED_LATE" && f.projectId === call6.id)?.text).toMatch(/Hank Helper stayed 1 h 3[45] min after Eddie Electrician left/);
+    expect(flags.find((f) => f.kind === "STAYED_LATE" && f.projectId === call6.id)?.text).toMatch(/Hank Helper stayed 1 h 3[45] min after Eddie Electrician \(lead\) left/);
     expect(flags.some((f) => f.projectId === call3.id)).toBe(false);
+    // lead leaves early and hands the lead to the co-worker, who then owes the work order
+    const call7 = await labour.startServiceCall(elec, { customer: "Pharmacy" }, { lat: 43.74, lng: -79.54 });
+    await labour.joinServiceCall(helperUser, call7.id, { lat: 43.74, lng: -79.54 });
+    await expect(labour.clockOut(helperUser, { lat: 43.74, lng: -79.54 }, undefined, elec.id)).rejects.toThrow(/Only the lead/);
+    await labour.clockOut(elec, { lat: 43.74, lng: -79.54 }, undefined, helperUser.id);
+    expect((await prisma.project.findUniqueOrThrow({ where: { id: call7.id } })).serviceLeadUserId).toBe(helperUser.id);
+    await expect(labour.clockOut(helperUser, { lat: 43.74, lng: -79.54 })).rejects.toThrow(/Fill work order first/);
+    await labour.completeWorkOrder(helperUser, call7.id, { workSummary: "Finished panel labels", markedComplete: false, jobStatus: "COMPLETE" });
+    await labour.clockOut(helperUser, { lat: 43.74, lng: -79.54 });
+    // alone: last one can't hand over to nobody
+    const call8 = await labour.startServiceCall(helperUser, { customer: "Kiosk" }, { lat: 43.75, lng: -79.55 });
+    await expect(labour.clockOut(helperUser, { lat: 43.75, lng: -79.55 }, undefined, elec.id)).rejects.toThrow(/not on this call/);
+    await labour.completeWorkOrder(helperUser, call8.id, { workSummary: "Reset breaker", markedComplete: false, jobStatus: "COMPLETE" });
+    await labour.clockOut(helperUser, { lat: 43.75, lng: -79.55 });
     await admin.saveSettings(adminU, { "field.allowServiceCalls": false });
-    await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/switched off/);
+    await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/Service calls are off/);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": true });
     const signoff = await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: job.id } });
     expect(signoff.signatureDocId).toBeTruthy();

@@ -27,7 +27,6 @@ export const workerSchema = z.object({
   overtimeRate: zNonNeg,
   userId: zOptId,
   active: z.boolean().default(true),
-  helperOnly: z.boolean().optional(),
 });
 
 export async function saveWorker(actor: Actor, id: string | null, input: z.infer<typeof workerSchema>) {
@@ -216,19 +215,17 @@ export async function assertOnSite(t: Tx, p: { number: string; siteLat: number |
   if (!(await getSetting("field.geofenceEnabled", t))) return null;
   const radius = p.geofenceRadiusM ?? Number(await getSetting("field.geofenceRadiusMeters", t));
   if (p.siteLat == null || p.siteLng == null) {
-    throw new UserError(`The site location for ${p.number} hasn't been set yet, so you can't ${verb}. Ask the office to set it on the job's Info tab.`);
+    throw new UserError("Site not set. Call office.");
   }
   if (geo.lat == null || geo.lng == null || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) {
     throw new UserError(
-      geo.error === "denied"
-        ? `Location is blocked for this site. Allow location for your browser in your phone's settings, then try again. You need to be within ${radius} m of the site to ${verb}.`
-        : `We couldn't get your location. Turn on Location on your phone and try again. You need to be within ${radius} m of the site to ${verb}.`,
+      geo.error === "denied" ? "Location blocked. Allow it in phone settings." : "Turn on location.",
     );
   }
   const dist = distanceMeters({ lat: geo.lat, lng: geo.lng }, { lat: p.siteLat, lng: p.siteLng });
   if (dist > radius) {
-    const acc = geo.accuracy && geo.accuracy > 25 ? ` Your phone's GPS is only accurate to about ${Math.round(geo.accuracy)} m right now; stepping outside can help.` : "";
-    throw new UserError(`You're ${fmtDistance(dist)} from the ${p.number} site. Move within ${radius} m of the site to ${verb}.${acc}`);
+    const acc = geo.accuracy && geo.accuracy > 25 ? ` Weak GPS (±${Math.round(geo.accuracy)} m). Step outside.` : "";
+    throw new UserError(`You're ${fmtDistance(dist)} away. Get within ${radius} m.${acc}`);
   }
   return dist;
 }
@@ -240,10 +237,12 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (open) throw new UserError(`You are still clocked in on ${open.project.number}. Clock out first.`);
+    if (open) throw new UserError(`Clock out of ${open.project.number} first.`);
     const p = await loadProject(t, projectId);
     const dist = await assertOnSite(t, p, geo, "clock in");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    // Service work order with nobody leading right now: first one in leads.
+    if (p.jobType === "SERVICE" && !(await leadIsOnCall(t, p.id, p.serviceLeadUserId, actor.id))) await t.project.update({ where: { id: p.id }, data: { serviceLeadUserId: actor.id } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return c;
   });
@@ -263,17 +262,15 @@ export const serviceCallSchema = z.object({
  */
 export async function startServiceCall(actor: Actor, input: z.infer<typeof serviceCallSchema>, geo: GeoPoint) {
   requirePerm(actor, "field.use");
-  assert(await getSetting("field.allowServiceCalls"), "Starting service calls from the field app is switched off. Call the office.");
+  assert(await getSetting("field.allowServiceCalls"), "Service calls are off. Call office.");
   if (geo.lat == null || geo.lng == null || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) {
-    throw new UserError(geo.error === "denied"
-      ? "Location is blocked for this site. Allow location for your browser in your phone's settings, then try again. A service call needs your location."
-      : "We couldn't get your location. Turn on Location on your phone and try again. A service call needs your location.");
+    throw new UserError(geo.error === "denied" ? "Location blocked. Allow it in phone settings." : "Turn on location.");
   }
   return tx(async (t) => {
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (open) throw new UserError(`You are still clocked in on ${open.project.number}. Clock out first.`);
+    if (open) throw new UserError(`Clock out of ${open.project.number} first.`);
     const base = Number(await getSetting("field.geofenceRadiusMeters", t));
     // Weak GPS at the start would make the pin unreliable; widen this job's range to cover it (max 500 m).
     const radius = geo.accuracy && geo.accuracy > base / 2 ? Math.min(500, Math.ceil(base + geo.accuracy)) : null;
@@ -282,19 +279,19 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
       data: {
         number, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
         name: `Service call: ${input.customer}`.slice(0, 200), location: input.address ?? null, siteContactName: input.customer, siteContactPhone: input.phone,
-        scope: input.problem, description: `Started from the field app by ${worker.name}. Office to complete client, pricing and PM.`,
-        siteLat: geo.lat, siteLng: geo.lng, geofenceRadiusM: radius,
+        scope: input.problem, description: `Started on site by ${worker.name}.`,
+        siteLat: geo.lat, siteLng: geo.lng, geofenceRadiusM: radius, serviceLeadUserId: actor.id,
       },
     });
     await t.stageHistory.create({ data: { projectId: p.id, toStage: "EXECUTION", byId: actor.id, note: "Service call started from the field app" } });
-    await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: worker.helperOnly ? "Helper" : "Service technician" } });
+    await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: "Service technician" } });
     // "Who's with you?": expected helper is added to the call (no hours until they join on site) and notified.
     if (input.helperWorkerId) {
       const h = await t.worker.findUnique({ where: { id: input.helperWorkerId } });
       assert(h && h.active && h.id !== worker.id, "Pick a co-worker from the list.");
       if (h.userId) {
-        await t.projectMember.upsert({ where: { projectId_userId: { projectId: p.id, userId: h.userId } }, create: { projectId: p.id, userId: h.userId, roleLabel: "Helper" }, update: {} });
-        await notifyUsers(t, [h.userId], { type: "servicecall.join", title: `Co-worker call: ${worker.name} started ${input.customer} and added you. Join when you're there.`, body: input.address ?? undefined, link: "/field", projectId: p.id }, actor.id);
+        await t.projectMember.upsert({ where: { projectId_userId: { projectId: p.id, userId: h.userId } }, create: { projectId: p.id, userId: h.userId, roleLabel: "Co-worker" }, update: {} });
+        await notifyUsers(t, [h.userId], { type: "servicecall.join", title: `${worker.name} started ${input.customer} and added you. Join when there.`, body: input.address ?? undefined, link: "/field", projectId: p.id }, actor.id);
       }
       await audit(t, actor, { action: "servicecall.helper", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number}: ${worker.name} added ${h.name} as co-worker${h.userId ? "" : " (no field login, not notified)"}` });
     }
@@ -309,7 +306,7 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
 }
 
 /** Clock out → creates the time entry. Regular/overtime split by daily threshold across all of the day's entries. */
-export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string) {
+export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string, handLeadToUserId?: string) {
   requirePerm(actor, "field.use");
   return tx(async (t) => {
     const worker = await workerForUser(actor.id, t);
@@ -317,7 +314,16 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
     assert(open, "You are not clocked in.");
     const dist = await assertOnSite(t, open.project, geo, "clock out");
-    if (await needsWorkOrder(t, actor.id, open)) throw new UserError("Fill in the work order form before you clock out. It's further down this job's page.");
+    if (handLeadToUserId) {
+      assert(open.project.serviceLeadUserId === actor.id, "Only the lead can hand over the lead.");
+      const other = await t.clockEntry.findFirst({ where: { projectId: open.projectId, clockOutAt: null, worker: { userId: handLeadToUserId } }, include: { worker: true } });
+      assert(other, "They're not on this call any more. Fill work order instead.");
+      await t.project.update({ where: { id: open.projectId }, data: { serviceLeadUserId: handLeadToUserId } });
+      await notifyUsers(t, [handLeadToUserId], { type: "servicecall.lead", title: `${worker.name} left. You're lead on ${open.project.siteContactName ?? open.project.number}. Fill work order before you clock out.`, link: `/field/${open.projectId}`, projectId: open.projectId }, actor.id);
+      await audit(t, actor, { action: "servicecall.lead", entityType: "Project", entityId: open.projectId, projectId: open.projectId, summary: `${open.project.number}: ${worker.name} handed lead to ${other.worker.name}` });
+    } else if (await needsWorkOrder(t, actor.id, open)) {
+      throw new UserError("Fill work order first.");
+    }
     return closeClock(t, actor, worker, open, geo, notes, dist != null ? ` (${fmtDistance(dist)} from site)` : "");
   });
 }
@@ -326,23 +332,37 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
 export async function needsWorkOrder(t: Tx | typeof prisma, userId: string, open: { projectId: string; clockInAt: Date; project: { jobType: string } }) {
   if (open.project.jobType !== "SERVICE") return false;
   if (!(await getSetting("field.requireWorkOrderBeforeClockOut", t))) return false;
-  if (await isHelperOn(t, userId, open.projectId)) return false;
-  const done = await t.workOrderSignoff.count({ where: { projectId: open.projectId, completedById: userId, createdAt: { gte: open.clockInAt } } });
+  const p = await t.project.findUnique({ where: { id: open.projectId }, select: { serviceLeadUserId: true } });
+  if (p?.serviceLeadUserId && p.serviceLeadUserId !== userId) return false; // co-workers never owe it
+  const done = await t.workOrderSignoff.count({ where: { projectId: open.projectId, createdAt: { gte: open.clockInAt } } });
   return done === 0;
 }
 
-/** Helpers (helper-only employees, or anyone who joined the call as a helper) don't fill in the work order. */
-export async function isHelperOn(t: Tx | typeof prisma, userId: string, projectId: string) {
-  const [w, m] = await Promise.all([
-    t.worker.findUnique({ where: { userId }, select: { helperOnly: true } }),
-    t.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { roleLabel: true } }),
-  ]);
-  return !!w?.helperOnly || m?.roleLabel === "Helper";
+/** Is the call's lead currently clocked in on it (ignoring `except`)? */
+async function leadIsOnCall(t: Tx | typeof prisma, projectId: string, leadUserId: string | null, except?: string) {
+  if (!leadUserId || leadUserId === except) return false;
+  return (await t.clockEntry.count({ where: { projectId, clockOutAt: null, worker: { userId: leadUserId } } })) > 0;
+}
+
+/** Lead of a service call takes over: must be clocked in on it. */
+export async function takeOverLead(actor: Actor, projectId: string) {
+  requirePerm(actor, "field.use");
+  return tx(async (t) => {
+    const worker = await workerForUser(actor.id, t);
+    assert(worker, "Your account is not linked to a worker profile.");
+    const mine = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null, projectId }, include: { project: true } });
+    assert(mine && mine.project.jobType === "SERVICE", "Join the call first.");
+    if (mine.project.serviceLeadUserId === actor.id) return;
+    const prev = mine.project.serviceLeadUserId;
+    await t.project.update({ where: { id: projectId }, data: { serviceLeadUserId: actor.id } });
+    if (prev) await notifyUsers(t, [prev], { type: "servicecall.lead", title: `${worker.name} took over as lead on ${mine.project.siteContactName ?? mine.project.number}. No work order needed from you.`, link: `/field/${projectId}`, projectId }, actor.id);
+    await audit(t, actor, { action: "servicecall.lead", entityType: "Project", entityId: projectId, projectId, summary: `${mine.project.number}: ${worker.name} took over as lead` });
+  });
 }
 
 /** Service calls someone is clocked in on right now, that a helper can join. */
 export async function joinableServiceCalls(actor: Actor) {
-  const named = new Set((await prisma.projectMember.findMany({ where: { userId: actor.id, roleLabel: "Helper", project: { jobType: "SERVICE", stage: "EXECUTION" } }, select: { projectId: true } })).map((m) => m.projectId));
+  const named = new Set((await prisma.projectMember.findMany({ where: { userId: actor.id, roleLabel: { in: ["Co-worker", "Helper"] }, project: { jobType: "SERVICE", stage: "EXECUTION" } }, select: { projectId: true } })).map((m) => m.projectId));
   const open = await prisma.clockEntry.findMany({
     where: { clockOutAt: null, worker: { userId: { not: actor.id } }, project: { jobType: "SERVICE", stage: "EXECUTION" } },
     include: { worker: { select: { name: true } }, project: { select: { id: true, number: true, name: true, location: true, siteContactName: true, siteLat: true, siteLng: true } } },
@@ -364,19 +384,18 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const mine = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (mine) throw new UserError(`You are still clocked in on ${mine.project.number}. Clock out first.`);
+    if (mine) throw new UserError(`Clock out of ${mine.project.number} first.`);
     const p = await loadProject(t, projectId);
-    assert(p.jobType === "SERVICE" && p.stage === "EXECUTION", "That service call is no longer open.");
+    assert(p.jobType === "SERVICE" && p.stage === "EXECUTION", "That call has ended.");
     const lead = await t.clockEntry.findFirst({ where: { projectId, clockOutAt: null }, include: { worker: true } });
-    assert(lead, "Nobody is clocked in on that service call any more, so it can't be joined.");
+    assert(lead, "That call has ended.");
     const dist = await assertOnSite(t, p, geo, "clock in");
-    // Helper-only employees join as helpers. Anyone else joins as the technician (and fills in the work order)
-    // only if the call doesn't have a technician yet, e.g. the helper got there first and started it.
-    const hasTech = await t.projectMember.count({ where: { projectId, roleLabel: { not: "Helper" }, user: { worker: { helperOnly: false } } } });
-    const roleLabel = worker.helperOnly || hasTech ? "Helper" : "Service technician";
-    await t.projectMember.upsert({ where: { projectId_userId: { projectId, userId: actor.id } }, create: { projectId, userId: actor.id, roleLabel }, update: {} });
+    await t.projectMember.upsert({ where: { projectId_userId: { projectId, userId: actor.id } }, create: { projectId, userId: actor.id, roleLabel: "Co-worker" }, update: {} });
+    // Nobody leading right now (e.g. lead left without handing over): the one joining leads.
+    const leads = await leadIsOnCall(t, projectId, p.serviceLeadUserId, actor.id);
+    if (!leads) await t.project.update({ where: { id: projectId }, data: { serviceLeadUserId: actor.id } });
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} as ${roleLabel === "Helper" ? "co-worker" : "technician"} with ${lead.worker.name}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
+    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} with ${lead.worker.name}${leads ? "" : " (now lead)"}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return p;
   });
 }
@@ -394,38 +413,36 @@ export async function crewFlags(from: Date, to: Date): Promise<CrewFlag[]> {
   const projects = await prisma.project.findMany({
     where: { jobType: "SERVICE", clockEntries: { some: { clockInAt: { gte: from, lt: end } } } },
     select: {
-      id: true, number: true, name: true,
-      members: { select: { roleLabel: true, user: { select: { name: true, worker: { select: { id: true, helperOnly: true } } } } } },
-      clockEntries: { select: { workerId: true, clockInAt: true, clockOutAt: true, worker: { select: { name: true, helperOnly: true } } } },
+      id: true, number: true, name: true, serviceLeadUserId: true,
+      members: { select: { roleLabel: true, userId: true, user: { select: { name: true, worker: { select: { id: true } } } } } },
+      clockEntries: { select: { workerId: true, clockInAt: true, clockOutAt: true, worker: { select: { name: true, userId: true } } } },
     },
   });
   const flags: CrewFlag[] = [];
   for (const p of projects) {
-    const helperWorkerIds = new Set(p.members.filter((m) => m.roleLabel === "Helper" || m.user.worker?.helperOnly).map((m) => m.user.worker?.id).filter((x): x is string => !!x));
     const anyOpen = p.clockEntries.some((c) => !c.clockOutAt);
-    const techs = p.clockEntries.filter((c) => !helperWorkerIds.has(c.workerId) && !c.worker.helperOnly);
-    const techNames = [...new Set(techs.map((c) => c.worker.name))].join(", ") || "the technician";
-    // named / joined helper with no clock-in at all, once the call is over
+    const lead = p.clockEntries.filter((c) => c.worker.userId === p.serviceLeadUserId);
+    const leadName = lead[0]?.worker.name ?? "the lead";
+    // co-worker added at start (or joined) but never clocked in, once the call is over
     if (!anyOpen) {
       for (const m of p.members) {
         const wid = m.user.worker?.id;
-        if (m.roleLabel !== "Helper" || !wid) continue;
+        if (!["Co-worker", "Helper"].includes(m.roleLabel) || !wid) continue;
         if (!p.clockEntries.some((c) => c.workerId === wid)) {
-          flags.push({ kind: "NO_HOURS", projectId: p.id, number: p.number, name: p.name, text: `${m.user.name} was added as co-worker with ${techNames} on ${p.number} ${p.name} but never clocked in. Add their hours if they worked.` });
+          flags.push({ kind: "NO_HOURS", projectId: p.id, number: p.number, name: p.name, text: `${m.user.name} was added as co-worker with ${leadName} on ${p.number} ${p.name} but never clocked in. Add their hours if they worked.` });
         }
       }
     }
-    // helper stayed late after the last technician left
-    const techOuts = techs.map((c) => c.clockOutAt).filter((d): d is Date => !!d);
-    if (!techOuts.length || techs.some((c) => !c.clockOutAt)) continue;
-    const lastTechOut = new Date(Math.max(...techOuts.map((d) => d.getTime())));
+    // a co-worker stayed clocked in long after the lead left
+    if (!lead.length || lead.some((c) => !c.clockOutAt)) continue;
+    const leadOut = new Date(Math.max(...lead.map((c) => c.clockOutAt!.getTime())));
     for (const c of p.clockEntries) {
-      if (!(helperWorkerIds.has(c.workerId) || c.worker.helperOnly)) continue;
+      if (c.worker.userId === p.serviceLeadUserId) continue;
       const out = c.clockOutAt ?? new Date();
-      const mins = Math.round((out.getTime() - lastTechOut.getTime()) / 60000);
+      const mins = Math.round((out.getTime() - leadOut.getTime()) / 60000);
       if (mins > lateMin) {
         const dur = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
-        flags.push({ kind: "STAYED_LATE", projectId: p.id, number: p.number, name: p.name, text: `${c.worker.name} ${c.clockOutAt ? "stayed" : "has been clocked in"} ${dur} after ${techNames} left ${p.number} ${p.name}.` });
+        flags.push({ kind: "STAYED_LATE", projectId: p.id, number: p.number, name: p.name, text: `${c.worker.name} ${c.clockOutAt ? "stayed" : "has been clocked in"} ${dur} after ${leadName} (lead) left ${p.number} ${p.name}.` });
       }
     }
   }

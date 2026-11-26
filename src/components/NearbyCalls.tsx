@@ -6,7 +6,7 @@ import { ClockForm } from "./FieldClient";
 import { distanceMeters, fmtDistance } from "@/lib/geo";
 import type { ActionState } from "@/lib/action";
 
-type Call = { id: string; client: string; crew: string; since: string; location: string | null; lat: number | null; lng: number | null };
+type Call = { id: string; client: string; crew: string; since: string; location: string | null; lat: number | null; lng: number | null; namedMe?: boolean };
 
 /** Shows only service calls near where the phone is (the server still enforces the site range on join). */
 export function NearbyCalls({ calls, within, action }: { calls: Call[]; within: number; action: (prev: ActionState, fd: FormData) => Promise<ActionState> }) {
@@ -35,8 +35,8 @@ export function NearbyCalls({ calls, within, action }: { calls: Call[]; within: 
   const near = calls
     .filter((c) => c.lat != null && c.lng != null)
     .map((c) => ({ ...c, dist: distanceMeters(here, { lat: c.lat!, lng: c.lng! }) }))
-    .filter((c) => c.dist <= within)
-    .sort((a, b) => a.dist - b.dist);
+    .filter((c) => c.namedMe || c.dist <= within)
+    .sort((a, b) => Number(!!b.namedMe) - Number(!!a.namedMe) || a.dist - b.dist);
   if (!near.length) {
     return (
       <div className="mt-3 space-y-2 text-sm text-slate-500">
@@ -49,6 +49,7 @@ export function NearbyCalls({ calls, within, action }: { calls: Call[]; within: 
     <ul className="mt-3 space-y-3">{near.map((c) => (
       <li key={c.id} className="rounded-lg border border-slate-200 p-3">
         <div className="font-semibold">{c.client}</div>
+        {c.namedMe ? <div className="text-xs font-semibold text-accent-600">{c.crew} named you as their helper</div> : null}
         <div className="text-sm text-slate-600">With {c.crew} · since {c.since}</div>
         <div className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{c.location ? `${c.location} · ` : ""}{fmtDistance(c.dist)} away</div>
         <div className="mt-2"><ClockForm action={action} projectId={c.id} label="Join & clock in" tone="in" /></div>

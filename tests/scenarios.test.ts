@@ -438,6 +438,28 @@ describe("Scenario 4: service work order from the field", () => {
     await labour.completeWorkOrder(elec, call4.id, { workSummary: "Fixed light", markedComplete: false, jobStatus: "COMPLETE" });
     await labour.clockOut(elec, { lat: 43.71, lng: -79.51 });
     expect((await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: call4.id } })).markedComplete).toBe(true);
+    // "Who's with you?": named helper is notified, sees the call even from far away, hours only from when he joins
+    const call5 = await labour.startServiceCall(elec, { customer: "Library", helperWorkerId: hw.id }, { lat: 43.72, lng: -79.52 });
+    expect(await prisma.notification.count({ where: { userId: helperUser.id, type: "servicecall.join", projectId: call5.id } })).toBe(1);
+    const j5 = (await labour.joinableServiceCalls(helperUser)).find((j) => j.project.id === call5.id);
+    expect(j5?.namedMe).toBe(true);
+    await expect(labour.joinServiceCall(helperUser, call5.id, { lat: 43.78, lng: -79.52 })).rejects.toThrow(/km from/);
+    // journeyman finishes; helper never shows up → office flag
+    await labour.completeWorkOrder(elec, call5.id, { workSummary: "Done alone", markedComplete: false, jobStatus: "COMPLETE" });
+    await labour.clockOut(elec, { lat: 43.72, lng: -79.52 });
+    let flags = await labour.crewFlags(addDays(today(), -1), today());
+    expect(flags.some((f) => f.kind === "NO_HOURS" && f.projectId === call5.id && /Hank Helper/.test(f.text))).toBe(true);
+    // helper stays late after the journeyman leaves → flag
+    const call6 = await labour.startServiceCall(elec, { customer: "Gym" }, { lat: 43.73, lng: -79.53 });
+    await labour.joinServiceCall(helperUser, call6.id, { lat: 43.73, lng: -79.53 });
+    await labour.completeWorkOrder(elec, call6.id, { workSummary: "Fixed", markedComplete: false, jobStatus: "COMPLETE" });
+    await labour.clockOut(elec, { lat: 43.73, lng: -79.53 });
+    await prisma.clockEntry.updateMany({ where: { projectId: call6.id, worker: { userId: elec.id } }, data: { clockOutAt: new Date(Date.now() - 95 * 60000) } });
+    await prisma.clockEntry.updateMany({ where: { projectId: call6.id }, data: { clockInAt: new Date(Date.now() - 3 * 3600000) } });
+    await labour.clockOut(helperUser, { lat: 43.73, lng: -79.53 });
+    flags = await labour.crewFlags(addDays(today(), -1), today());
+    expect(flags.find((f) => f.kind === "STAYED_LATE" && f.projectId === call6.id)?.text).toMatch(/Hank Helper stayed 1 h 3[45] min after Eddie Electrician left/);
+    expect(flags.some((f) => f.projectId === call3.id)).toBe(false);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": false });
     await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/switched off/);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": true });

@@ -254,6 +254,7 @@ export const serviceCallSchema = z.object({
   address: zOptText(300),
   phone: zOptText(50),
   problem: zOptText(2000),
+  helperWorkerId: zOptId,
 });
 
 /**
@@ -287,6 +288,16 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
     });
     await t.stageHistory.create({ data: { projectId: p.id, toStage: "EXECUTION", byId: actor.id, note: "Service call started from the field app" } });
     await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: worker.helperOnly ? "Helper" : "Service technician" } });
+    // "Who's with you?": expected helper is added to the call (no hours until they join on site) and notified.
+    if (input.helperWorkerId) {
+      const h = await t.worker.findUnique({ where: { id: input.helperWorkerId } });
+      assert(h && h.active && h.id !== worker.id, "Pick a co-worker from the list.");
+      if (h.userId) {
+        await t.projectMember.upsert({ where: { projectId_userId: { projectId: p.id, userId: h.userId } }, create: { projectId: p.id, userId: h.userId, roleLabel: "Helper" }, update: {} });
+        await notifyUsers(t, [h.userId], { type: "servicecall.join", title: `${worker.name} started ${input.customer}. Tap to join when you're there.`, body: input.address ?? undefined, link: "/field", projectId: p.id }, actor.id);
+      }
+      await audit(t, actor, { action: "servicecall.helper", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number}: ${worker.name} named ${h.name} as helper${h.userId ? "" : " (no field login, not notified)"}` });
+    }
     await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
     await createCloseoutItems(t, p.id, "SERVICE");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId: p.id, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
@@ -331,18 +342,19 @@ export async function isHelperOn(t: Tx | typeof prisma, userId: string, projectI
 
 /** Service calls someone is clocked in on right now, that a helper can join. */
 export async function joinableServiceCalls(actor: Actor) {
+  const named = new Set((await prisma.projectMember.findMany({ where: { userId: actor.id, roleLabel: "Helper", project: { jobType: "SERVICE", stage: "EXECUTION" } }, select: { projectId: true } })).map((m) => m.projectId));
   const open = await prisma.clockEntry.findMany({
     where: { clockOutAt: null, worker: { userId: { not: actor.id } }, project: { jobType: "SERVICE", stage: "EXECUTION" } },
     include: { worker: { select: { name: true } }, project: { select: { id: true, number: true, name: true, location: true, siteContactName: true, siteLat: true, siteLng: true } } },
     orderBy: { clockInAt: "desc" },
   });
-  const map = new Map<string, { project: (typeof open)[number]["project"]; crew: string[]; since: Date }>();
+  const map = new Map<string, { project: (typeof open)[number]["project"]; crew: string[]; since: Date; namedMe: boolean }>();
   for (const c of open) {
     const e = map.get(c.projectId);
     if (e) e.crew.push(c.worker.name);
-    else map.set(c.projectId, { project: c.project, crew: [c.worker.name], since: c.clockInAt });
+    else map.set(c.projectId, { project: c.project, crew: [c.worker.name], since: c.clockInAt, namedMe: named.has(c.projectId) });
   }
-  return [...map.values()];
+  return [...map.values()].sort((a, b) => Number(b.namedMe) - Number(a.namedMe));
 }
 
 /** Helper joins a service call someone else is on: added to the job as Helper and clocked in (site range applies). */
@@ -367,6 +379,57 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} as ${roleLabel === "Helper" ? "helper" : "technician"} with ${lead.worker.name}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return p;
   });
+}
+
+export type CrewFlag = { kind: "NO_HOURS" | "STAYED_LATE"; projectId: string; number: string; name: string; text: string };
+
+/**
+ * Service-call crew checks for the office (Timesheets), for calls active in the date range:
+ * - a helper was named / joined but never clocked in, after everyone else has clocked out
+ * - a helper stayed clocked in more than N minutes after the last technician clocked out
+ */
+export async function crewFlags(from: Date, to: Date): Promise<CrewFlag[]> {
+  const lateMin = Number(await getSetting("field.helperLateFlagMinutes"));
+  const end = addDays(to, 1);
+  const projects = await prisma.project.findMany({
+    where: { jobType: "SERVICE", clockEntries: { some: { clockInAt: { gte: from, lt: end } } } },
+    select: {
+      id: true, number: true, name: true,
+      members: { select: { roleLabel: true, user: { select: { name: true, worker: { select: { id: true, helperOnly: true } } } } } },
+      clockEntries: { select: { workerId: true, clockInAt: true, clockOutAt: true, worker: { select: { name: true, helperOnly: true } } } },
+    },
+  });
+  const flags: CrewFlag[] = [];
+  for (const p of projects) {
+    const helperWorkerIds = new Set(p.members.filter((m) => m.roleLabel === "Helper" || m.user.worker?.helperOnly).map((m) => m.user.worker?.id).filter((x): x is string => !!x));
+    const anyOpen = p.clockEntries.some((c) => !c.clockOutAt);
+    const techs = p.clockEntries.filter((c) => !helperWorkerIds.has(c.workerId) && !c.worker.helperOnly);
+    const techNames = [...new Set(techs.map((c) => c.worker.name))].join(", ") || "the technician";
+    // named / joined helper with no clock-in at all, once the call is over
+    if (!anyOpen) {
+      for (const m of p.members) {
+        const wid = m.user.worker?.id;
+        if (m.roleLabel !== "Helper" || !wid) continue;
+        if (!p.clockEntries.some((c) => c.workerId === wid)) {
+          flags.push({ kind: "NO_HOURS", projectId: p.id, number: p.number, name: p.name, text: `${m.user.name} was named as helper with ${techNames} on ${p.number} ${p.name} but never clocked in. Add their hours if they worked.` });
+        }
+      }
+    }
+    // helper stayed late after the last technician left
+    const techOuts = techs.map((c) => c.clockOutAt).filter((d): d is Date => !!d);
+    if (!techOuts.length || techs.some((c) => !c.clockOutAt)) continue;
+    const lastTechOut = new Date(Math.max(...techOuts.map((d) => d.getTime())));
+    for (const c of p.clockEntries) {
+      if (!(helperWorkerIds.has(c.workerId) || c.worker.helperOnly)) continue;
+      const out = c.clockOutAt ?? new Date();
+      const mins = Math.round((out.getTime() - lastTechOut.getTime()) / 60000);
+      if (mins > lateMin) {
+        const dur = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
+        flags.push({ kind: "STAYED_LATE", projectId: p.id, number: p.number, name: p.name, text: `${c.worker.name} ${c.clockOutAt ? "stayed" : "has been clocked in"} ${dur} after ${techNames} left ${p.number} ${p.name}.` });
+      }
+    }
+  }
+  return flags;
 }
 
 /** Office clock-out for someone who left site without clocking out (no geofence; recorded in the audit trail). */

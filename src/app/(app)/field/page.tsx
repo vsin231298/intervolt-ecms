@@ -19,6 +19,7 @@ export default async function FieldHome() {
   const allowServiceCalls = await getSetting("field.allowServiceCalls");
   const woMissing = open ? await needsWorkOrder(prisma, user.id, open) : false;
   const joinable = worker && !open && allowServiceCalls ? await joinableServiceCalls(user) : [];
+  const crewChoices = worker && !open && allowServiceCalls ? await prisma.worker.findMany({ where: { active: true, id: { not: worker.id } }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
   const todays = jobs.filter((j) => j.today);
   const others = jobs.filter((j) => !j.today);
   return (
@@ -50,6 +51,11 @@ export default async function FieldHome() {
             <ClockForm action={startServiceCallAction} label="Start call & clock in" tone="in">
               <input name="customer" required placeholder="Client name *" className="input" />
               <input name="address" placeholder="Address (optional)" className="input" />
+              <label className="block text-sm font-medium text-slate-700">Who&apos;s with you? (optional)
+              <select name="helperWorkerId" defaultValue="" className="input mt-1">
+                <option value="">Nobody, I&apos;m on my own</option>
+                {crewChoices.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select></label>
             </ClockForm>
           </div>
         </details>
@@ -58,7 +64,7 @@ export default async function FieldHome() {
         <details className="card p-4" open={worker.helperOnly}>
           <summary className="cursor-pointer font-semibold">Join a service call</summary>
           <p className="mt-1 text-sm text-slate-600">For when you&apos;re working with someone who already started the call. Only calls near you are shown.</p>
-          <NearbyCalls within={300} action={joinServiceCallAction} calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), since: fmtDateTime(j.since), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng }))} />
+          <NearbyCalls within={300} action={joinServiceCallAction} calls={joinable.map((j) => ({ id: j.project.id, client: j.project.siteContactName ?? j.project.name, crew: j.crew.join(", "), since: fmtDateTime(j.since), location: j.project.location, lat: j.project.siteLat, lng: j.project.siteLng, namedMe: j.namedMe }))} />
         </details>
       ) : null}
       {others.length ? (

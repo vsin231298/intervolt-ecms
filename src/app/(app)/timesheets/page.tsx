@@ -8,6 +8,8 @@ import { Card, Drawer, Empty, Field, Options, PageHeader, Stat } from "@/compone
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { TimeEntries } from "@/components/TimeEntries";
 import { addTimeAction, officeClockOutAction } from "@/app/actions/labour";
+import { crewFlags } from "@/services/labour";
+import Link from "next/link";
 import { fmtDateTime } from "@/lib/dates";
 
 export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string; worker?: string; job?: string; filter?: string }> }) {
@@ -33,6 +35,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
     prisma.project.findMany({ where: { stage: { notIn: ["OPPORTUNITY", "UNDER_REVIEW", "ESTIMATING", "QUOTING", "READY_TO_SUBMIT", "SUBMITTED"] } }, orderBy: { number: "desc" }, select: { id: true, number: true, name: true, stage: true } }),
     prisma.clockEntry.findMany({ where: { clockOutAt: null }, include: { worker: true, project: true }, orderBy: { clockInAt: "asc" } }),
   ]);
+  const flags = can(r, "time.manage") ? await crewFlags(from, to) : [];
   const showCost = can(r, "financials.view");
   const canManage = can(r, "time.manage");
   const reg = sum(entries.map((e) => e.regularHours));
@@ -71,6 +74,17 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
         <Stat label="Overtime hours" value={qty(ot)} />
         {showCost ? <Stat label="Labour cost" value={money(sum(entries.map((e) => e.cost)))} /> : <Stat label="Pending approval" value={entries.filter((e) => !e.approvedAt).length} />}
       </div>
+
+      {flags.length ? (
+        <Card title={`Service call crews to check (${flags.length})`}>
+          <ul className="space-y-2 text-sm">{flags.map((f, i) => (
+            <li key={i} className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-amber-900">
+              <span className="whitespace-nowrap font-semibold">{f.kind === "NO_HOURS" ? "No hours" : "Stayed late"}:</span>
+              <span>{f.text} <Link href={`/jobs/${f.projectId}/labour`} className="link">Open job</Link></span>
+            </li>
+          ))}</ul>
+        </Card>
+      ) : null}
 
       {openClocks.length ? (
         <Card title="Currently clocked in">

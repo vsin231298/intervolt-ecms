@@ -8,7 +8,7 @@ import { qty } from "@/lib/money";
 import { Badge, Card, Field, Notice, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { ClockForm, SignaturePad } from "@/components/FieldClient";
-import { assertFieldAccess, workerForUser } from "@/services/labour";
+import { assertFieldAccess, needsWorkOrder, workerForUser } from "@/services/labour";
 import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
 import { getSetting } from "@/lib/settings";
@@ -23,6 +23,8 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
   }
   const worker = await workerForUser(user.id);
   const [geofenceOn, defaultRadius] = await Promise.all([getSetting("field.geofenceEnabled"), getSetting("field.geofenceRadiusMeters")]);
+  const openHere = worker ? await prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null, projectId }, include: { project: true } }) : null;
+  const woMissing = openHere ? await needsWorkOrder(prisma, user.id, openHere) : false;
   const [p, open, docs, materials, updates, deficiencies] = await Promise.all([
     prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { client: true, projectManager: true } }),
     worker ? prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } }) : null,
@@ -61,6 +63,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
 
       <Card>
         {!worker ? <Notice tone="amber">Your login isn&apos;t linked to an employee profile, so you can&apos;t clock in.</Notice>
+          : here && woMissing ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><Notice tone="amber">Before you clock out, fill in the <a href="#work-order" className="link font-semibold">work order form</a> below. The Clock out button appears once it&apos;s saved.</Notice></>
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
           : open ? <Notice tone="amber">You&apos;re clocked in on {open.project.number}. <Link className="link" href={`/field/${open.projectId}`}>Go there to clock out</Link>.</Notice>
           : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" />}
@@ -130,7 +133,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
         {updates.length ? <ul className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-500">{updates.map((u) => <li key={u.id}>{fmtDateTime(u.createdAt)} · {u.kind === "ISSUE" ? (u.resolvedAt ? "issue (resolved)" : "issue") : "update"}: {u.message.slice(0, 80)}</li>)}</ul> : null}
       </Card>
 
-      <Card title="Complete work order / customer sign-off">
+      <Card title="Work order form / customer sign-off" className="scroll-mt-20" id="work-order">
         <ActionForm action={signoffAction} className="space-y-3">
           <input type="hidden" name="projectId" value={p.id} />
           <Field label="Work performed *"><textarea name="workSummary" required rows={3} className="input" /></Field>

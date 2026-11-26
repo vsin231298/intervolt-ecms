@@ -23,6 +23,7 @@ const GROUPS: { title: string; note?: string; keys: { key: SettingKey; label: st
     { key: "labour.burdenPercent", label: "Labour burden % added to wage cost" },
     { key: "field.geofenceEnabled", label: "Only allow clock in / out at the job site", hint: "Uses the phone's GPS and the site pin set on each job's Info tab" },
     { key: "field.geofenceRadiusMeters", label: "Clock-in range (metres from the site pin)", hint: "Each job can override this on its Info tab" },
+    { key: "field.requireWorkOrderBeforeClockOut", label: "Service calls: work order form must be filled in before clock out", hint: "Applies to service work orders; the office can still clock someone out from Timesheets" },
     { key: "field.allowServiceCalls", label: "Let field staff start a service call from the phone", hint: "Creates a service work order pinned where they stand and clocks them in; the office is notified" },
   ] },
   { title: "Procurement", keys: [

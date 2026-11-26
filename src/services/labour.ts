@@ -305,8 +305,17 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
     assert(open, "You are not clocked in.");
     const dist = await assertOnSite(t, open.project, geo, "clock out");
+    if (await needsWorkOrder(t, actor.id, open)) throw new UserError("Fill in the work order form before you clock out. It's further down this job's page.");
     return closeClock(t, actor, worker, open, geo, notes, dist != null ? ` (${fmtDistance(dist)} from site)` : "");
   });
+}
+
+/** Service calls: the work order form must be filled in during this shift before clocking out (setting). */
+export async function needsWorkOrder(t: Tx | typeof prisma, userId: string, open: { projectId: string; clockInAt: Date; project: { jobType: string } }) {
+  if (open.project.jobType !== "SERVICE") return false;
+  if (!(await getSetting("field.requireWorkOrderBeforeClockOut", t))) return false;
+  const done = await t.workOrderSignoff.count({ where: { projectId: open.projectId, completedById: userId, createdAt: { gte: open.clockInAt } } });
+  return done === 0;
 }
 
 /** Office clock-out for someone who left site without clocking out (no geofence; recorded in the audit trail). */
@@ -406,7 +415,9 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { signatureDocId: up.documentId } });
     }
     await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.markedComplete ? "completed" : "visit recorded"}${sigFile ? `, signed by ${input.customerName}` : ""}` });
-    await notifyUsers(t, [p.projectManagerId], { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId }, actor.id);
+    const sn = { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId };
+    if (!p.projectManagerId) await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], sn, actor.id);
+    else await notifyUsers(t, [p.projectManagerId], { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId }, actor.id);
     return s;
   });
 }

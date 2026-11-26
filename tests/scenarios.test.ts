@@ -388,6 +388,8 @@ describe("Scenario 4: service work order from the field", () => {
     // geofence can be switched off in settings
     await admin.saveSettings(adminU, { "field.geofenceEnabled": false });
     await labour.clockIn(elec, job.id);
+    await expect(labour.clockOut(elec)).rejects.toThrow(/work order form/);
+    await labour.completeWorkOrder(elec, job.id, { workSummary: "Return visit: labelled panel", markedComplete: false });
     await labour.clockOut(elec);
     await admin.saveSettings(adminU, { "field.geofenceEnabled": true });
     // unplanned service call started from the phone
@@ -399,12 +401,17 @@ describe("Scenario 4: service work order from the field", () => {
     expect((await labour.assignedJobs(elec)).jobs.map((j) => j.project.id)).toContain(call.id);
     expect(await prisma.notification.count({ where: { userId: pm.id, projectId: call.id } })).toBe(1);
     await expect(labour.startServiceCall(elec, { customer: "Other", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/still clocked in/);
-    await expect(labour.clockOut(elec, { lat: 43.66, lng: -79.3817 })).rejects.toThrow(/clock out/);
+    await expect(labour.clockOut(elec, { lat: 43.66, lng: -79.3817 })).rejects.toThrow(/Move within/);
+    await expect(labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 })).rejects.toThrow(/Fill in the work order form/);
+    await labour.completeWorkOrder(elec, call.id, { workSummary: "Reset GFCI, replaced 20A breaker", markedComplete: true });
+    expect(await prisma.notification.count({ where: { userId: pm.id, type: "workorder.signoff", projectId: call.id } })).toBe(1);
     await labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 });
     // weak GPS widens that call's range
     const call2 = await labour.startServiceCall(elec, { customer: "Gas Bar", address: "9 Queen St" }, { lat: 43.65, lng: -79.39, accuracy: 120 });
     expect(call2.geofenceRadiusM).toBe(170);
+    await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": false });
     await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
+    await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });
     await admin.saveSettings(adminU, { "field.allowServiceCalls": false });
     await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/switched off/);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": true });

@@ -6,7 +6,7 @@ import { fmtDate, fmtDateTime, today } from "@/lib/dates";
 import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
-import { assignedJobs } from "@/services/labour";
+import { assignedJobs, needsWorkOrder } from "@/services/labour";
 import { clockOutAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
 
@@ -16,6 +16,7 @@ export default async function FieldHome() {
   const open = worker ? await prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } }) : null;
   const todayHours = worker ? await prisma.timeEntry.aggregate({ where: { workerId: worker.id, date: today() }, _sum: { regularHours: true, overtimeHours: true } }) : null;
   const allowServiceCalls = await getSetting("field.allowServiceCalls");
+  const woMissing = open ? await needsWorkOrder(prisma, user.id, open) : false;
   const todays = jobs.filter((j) => j.today);
   const others = jobs.filter((j) => !j.today);
   return (
@@ -28,7 +29,9 @@ export default async function FieldHome() {
       {open ? (
         <div className="card space-y-3 border-emerald-300 p-4">
           <div className="text-sm">Clocked in on <Link className="link font-semibold" href={`/field/${open.projectId}`}>{open.project.number} {open.project.name}</Link> since {fmtDateTime(open.clockInAt)}</div>
-          <ClockForm action={clockOutAction} label="Clock out" tone="out" />
+          {woMissing
+            ? <Link href={`/field/${open.projectId}#work-order`} className="btn w-full bg-amber-500 py-4 text-lg text-white hover:bg-amber-600">Fill in work order to clock out</Link>
+            : <ClockForm action={clockOutAction} label="Clock out" tone="out" />}
         </div>
       ) : null}
       <section>

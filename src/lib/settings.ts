@@ -24,6 +24,7 @@ export const SETTING_DEFAULTS = {
   "field.geofenceEnabled": true,
   "field.geofenceRadiusMeters": 50,
   "field.allowServiceCalls": true,
+  "field.requireWorkOrderBeforeClockOut": true,
   "reminders.tenderDeadlineDays": [7, 3, 1],
   "reminders.quoteFollowUpDays": 3,
   "reminders.certificateExpiryDays": 30,

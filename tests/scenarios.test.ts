@@ -406,9 +406,15 @@ describe("Scenario 4: service work order from the field", () => {
     await labour.completeWorkOrder(elec, call.id, { workSummary: "Reset GFCI, replaced 20A breaker", markedComplete: true });
     expect(await prisma.notification.count({ where: { userId: pm.id, type: "workorder.signoff", projectId: call.id } })).toBe(1);
     await labour.clockOut(elec, { lat: 43.6489, lng: -79.3817 });
+    // travel: gap between leaving one job and clocking in at the next (same day) is paid as regular hours
+    await prisma.clockEntry.updateMany({ where: { workerId: w.id, clockOutAt: { not: null } }, data: { clockOutAt: new Date(Date.now() - 40 * 60_000) } });
     // weak GPS widens that call's range
     const call2 = await labour.startServiceCall(elec, { customer: "Gas Bar", address: "9 Queen St" }, { lat: 43.65, lng: -79.39, accuracy: 120 });
     expect(call2.geofenceRadiusM).toBe(170);
+    const travel = await prisma.timeEntry.findFirstOrThrow({ where: { projectId: call2.id, source: "TRAVEL" } });
+    expect(Number(travel.regularHours)).toBe(0.67);
+    expect(Number(travel.overtimeHours)).toBe(0);
+    expect(travel.description).toMatch(/^Travel 0:40 from WO-/);
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": false });
     await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });

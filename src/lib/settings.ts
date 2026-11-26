@@ -21,6 +21,7 @@ export const SETTING_DEFAULTS = {
   "change.markupPercent": 15,
   "labour.overtimeAfterHours": 8,
   "labour.burdenPercent": 0,
+  "labour.payTravelBetweenJobs": true,
   "field.geofenceEnabled": true,
   "field.geofenceRadiusMeters": 50,
   "field.allowServiceCalls": true,

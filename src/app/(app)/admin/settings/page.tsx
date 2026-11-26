@@ -21,6 +21,7 @@ const GROUPS: { title: string; note?: string; keys: { key: SettingKey; label: st
   { title: "Labour", keys: [
     { key: "labour.overtimeAfterHours", label: "Overtime after (hours per day)", hint: "Used when splitting clock-in/out time" },
     { key: "labour.burdenPercent", label: "Labour burden % added to wage cost" },
+    { key: "labour.payTravelBetweenJobs", label: "Pay travel between jobs", hint: "Gap between clocking out of one job and into the next, same day, is added as regular hours" },
     { key: "field.geofenceEnabled", label: "Only allow clock in / out at the job site", hint: "Uses the phone's GPS and the site pin set on each job's Info tab" },
     { key: "field.geofenceRadiusMeters", label: "Clock-in range (metres from the site pin)", hint: "Each job can override this on its Info tab" },
     { key: "field.requireWorkOrderBeforeClockOut", label: "Service calls: work order form must be filled in before clock out", hint: "Applies to service work orders; the office can still clock someone out from Timesheets" },

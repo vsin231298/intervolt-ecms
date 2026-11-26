@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 import { can } from "@/lib/rbac";
 import { ForbiddenError, NotFoundError, UserError, assert } from "@/lib/errors";
 import { d, pct, round2, sum } from "@/lib/money";
-import { addDays, dayOf, today } from "@/lib/dates";
+import { addDays, dayOf, today, TZ } from "@/lib/dates";
 import { zDate, zId, zNonNeg, zOptId, zOptText, zText } from "@/lib/forms";
 import { notifyUsers } from "@/lib/notify";
 import { getSetting } from "@/lib/settings";
@@ -230,6 +230,28 @@ export async function assertOnSite(t: Tx, p: { number: string; siteLat: number |
   return dist;
 }
 
+/**
+ * Travel between jobs: the gap between this worker's last clock-out today and this clock-in is
+ * paid as regular hours on the job they arrived at. Office can edit or delete it in Timesheets.
+ */
+async function addTravel(t: Tx, actor: Actor, worker: ClockWorker, toProjectId: string, toNumber: string, at: Date) {
+  if (!(await getSetting("labour.payTravelBetweenJobs", t))) return null;
+  const day = dayOf(at);
+  const last = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: { not: null, lte: at } }, orderBy: { clockOutAt: "desc" }, include: { project: true } });
+  if (!last || !last.clockOutAt || last.projectId === toProjectId) return null;
+  if (dayOf(last.clockOutAt).getTime() !== day.getTime()) return null;
+  const minutes = Math.round((at.getTime() - last.clockOutAt.getTime()) / 60_000);
+  if (minutes < 1) return null;
+  const hours = Math.round((minutes / 60) * 100) / 100;
+  const { cost } = await costFor(t, worker.id, hours, 0);
+  const fmt = (x: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(x);
+  const e = await t.timeEntry.create({
+    data: { workerId: worker.id, projectId: toProjectId, date: day, regularHours: hours, overtimeHours: 0, regularRate: worker.regularRate, overtimeRate: worker.overtimeRate, cost, source: "TRAVEL", description: `Travel ${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} from ${last.project.number} (${fmt(last.clockOutAt)} to ${fmt(at)})`, submittedById: actor.id },
+  });
+  await audit(t, actor, { action: "time.travel", entityType: "TimeEntry", entityId: e.id, projectId: toProjectId, summary: `${worker.name} travel ${minutes} min ${last.project.number} → ${toNumber}` });
+  return e;
+}
+
 export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {}) {
   requirePerm(actor, "field.use");
   await assertFieldAccess(actor, projectId);
@@ -241,6 +263,7 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const p = await loadProject(t, projectId);
     const dist = await assertOnSite(t, p, geo, "clock in");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt);
     // Service work order with nobody leading right now: first one in leads.
     if (p.jobType === "SERVICE" && !(await leadIsOnCall(t, p.id, p.serviceLeadUserId, actor.id))) await t.project.update({ where: { id: p.id }, data: { serviceLeadUserId: actor.id } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} clocked in on ${p.number}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
@@ -298,6 +321,7 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
     await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
     await createCloseoutItems(t, p.id, "SERVICE");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId: p.id, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    await addTravel(t, actor, worker, p.id, number, c.clockInAt);
     await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} service call started on site by ${worker.name}: ${input.customer}${input.address ? `, ${input.address}` : ""}`, after: { ...input, siteLat: geo.lat, siteLng: geo.lng, accuracy: geo.accuracy } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId: p.id, summary: `${worker.name} clocked in on ${number} (service call start)` });
     await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], { type: "job.assigned", title: `${worker.name} started service call ${number}: ${input.customer}`, body: `${input.address ?? "Address not given"}${input.problem ? ` · ${input.problem.slice(0, 140)}` : ""}. Add the client, PM and pricing.`, link: `/jobs/${p.id}`, projectId: p.id }, actor.id);
@@ -395,6 +419,7 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     const leads = await leadIsOnCall(t, projectId, p.serviceLeadUserId, actor.id);
     if (!leads) await t.project.update({ where: { id: projectId }, data: { serviceLeadUserId: actor.id } });
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    await addTravel(t, actor, worker, projectId, p.number, c.clockInAt);
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} with ${lead.worker.name}${leads ? "" : " (now lead)"}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
     return p;
   });

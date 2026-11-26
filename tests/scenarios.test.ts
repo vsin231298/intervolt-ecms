@@ -412,6 +412,32 @@ describe("Scenario 4: service work order from the field", () => {
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": false });
     await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });
+    // lead + helper: helper joins a call the lead started; only the lead fills in the work order
+    const helperUser = await makeUser("Hank Helper", "ELECTRICIAN");
+    const hw = await labour.saveWorker(pm, null, { name: "Hank Helper", trade: "Apprentice", regularRate: 25, overtimeRate: 37.5, userId: helperUser.id, active: true, helperOnly: true });
+    expect(hw.helperOnly).toBe(true);
+    const call3 = await labour.startServiceCall(elec, { customer: "Bakery" }, { lat: 43.7, lng: -79.5, accuracy: 8 });
+    expect(call3.location).toBeNull();
+    expect((await labour.joinableServiceCalls(helperUser)).map((j) => j.project.id)).toContain(call3.id);
+    await expect(labour.joinServiceCall(helperUser, call3.id, { lat: 43.71, lng: -79.5 })).rejects.toThrow(/Move within 50 m/);
+    await labour.joinServiceCall(helperUser, call3.id, { lat: 43.7001, lng: -79.5 });
+    await labour.clockOut(helperUser, { lat: 43.7001, lng: -79.5 }); // helper: no work order needed
+    await expect(labour.clockOut(elec, { lat: 43.7, lng: -79.5 })).rejects.toThrow(/work order form/);
+    await labour.completeWorkOrder(elec, call3.id, { workSummary: "Replaced GFCI in kitchen", markedComplete: false, jobStatus: "RETURN_VISIT", coWorkerIds: [hw.id], materialsUsed: [{ item: "GFCI 15A", quantity: "2" }], parkingAmount: 12.5 }, file("receipt.jpg", "image/jpeg"));
+    const so = await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: call3.id } });
+    expect(so.markedComplete).toBe(false);
+    expect(so.coWorkerIds).toEqual([hw.id]);
+    expect(Number(so.parkingAmount)).toBe(12.5);
+    expect(so.parkingReceiptDocId).toBeTruthy();
+    await labour.clockOut(elec, { lat: 43.7, lng: -79.5 });
+    // helper gets there first and starts it; journeyman joins as technician and owes the work order
+    const call4 = await labour.startServiceCall(helperUser, { customer: "Dentist" }, { lat: 43.71, lng: -79.51 });
+    await labour.joinServiceCall(elec, call4.id, { lat: 43.71, lng: -79.51 });
+    await expect(labour.clockOut(elec, { lat: 43.71, lng: -79.51 })).rejects.toThrow(/work order form/);
+    await labour.clockOut(helperUser, { lat: 43.71, lng: -79.51 });
+    await labour.completeWorkOrder(elec, call4.id, { workSummary: "Fixed light", markedComplete: false, jobStatus: "COMPLETE" });
+    await labour.clockOut(elec, { lat: 43.71, lng: -79.51 });
+    expect((await prisma.workOrderSignoff.findFirstOrThrow({ where: { projectId: call4.id } })).markedComplete).toBe(true);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": false });
     await expect(labour.startServiceCall(elec, { customer: "X Co", address: "1 Main St" }, { lat: 43.6, lng: -79.3 })).rejects.toThrow(/switched off/);
     await admin.saveSettings(adminU, { "field.allowServiceCalls": true });

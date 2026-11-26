@@ -926,6 +926,8 @@ model Worker {
   regularRate  Decimal  @db.Decimal(10, 2)
   overtimeRate Decimal  @db.Decimal(10, 2)
   active       Boolean  @default(true)
+  /// Helper / apprentice: can only join service calls started by someone else (no work order form).
+  helperOnly   Boolean  @default(false)
   userId       String?  @unique
   user         User?    @relation(fields: [userId], references: [id])
   createdAt    DateTime @default(now())
@@ -1421,6 +1423,14 @@ model WorkOrderSignoff {
   completedById  String
   workSummary    String
   markedComplete Boolean   @default(false)
+  /// COMPLETE | RETURN_VISIT | WAITING_PARTS | NEEDS_QUOTE
+  jobStatus      String?
+  /// Worker ids of co-workers on this visit
+  coWorkerIds    String[]  @default([])
+  /// [{ item, quantity }] used on this visit
+  materialsUsed  Json?
+  parkingAmount  Decimal?  @db.Decimal(10, 2)
+  parkingReceiptDocId String?
   customerName   String?
   signatureDocId String?
   signedAt       DateTime?

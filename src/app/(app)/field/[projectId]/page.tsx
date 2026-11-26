@@ -8,7 +8,8 @@ import { qty } from "@/lib/money";
 import { Badge, Card, Field, Notice, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { ClockForm, SignaturePad } from "@/components/FieldClient";
-import { assertFieldAccess, needsWorkOrder, workerForUser } from "@/services/labour";
+import { JOB_STATUSES, assertFieldAccess, isHelperOn, needsWorkOrder, workerForUser } from "@/services/labour";
+import { MaterialRows } from "@/components/MaterialRows";
 import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
 import { getSetting } from "@/lib/settings";
@@ -25,6 +26,15 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
   const [geofenceOn, defaultRadius] = await Promise.all([getSetting("field.geofenceEnabled"), getSetting("field.geofenceRadiusMeters")]);
   const openHere = worker ? await prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null, projectId }, include: { project: true } }) : null;
   const woMissing = openHere ? await needsWorkOrder(prisma, user.id, openHere) : false;
+  const helperHere = await isHelperOn(prisma, user.id, projectId);
+  // Co-workers: everyone else on this job's clock today (ticked by default), plus all active employees to pick from.
+  const sinceToday = new Date(Date.now() - 16 * 3_600_000);
+  const [crewClocks, allWorkers] = await Promise.all([
+    prisma.clockEntry.findMany({ where: { projectId, clockInAt: { gte: sinceToday }, ...(worker ? { workerId: { not: worker.id } } : {}) }, select: { workerId: true } }),
+    prisma.worker.findMany({ where: { active: true, ...(worker ? { id: { not: worker.id } } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+  ]);
+  const crewIds = new Set(crewClocks.map((c) => c.workerId));
+  const coWorkers = [...allWorkers.filter((w) => crewIds.has(w.id)), ...allWorkers.filter((w) => !crewIds.has(w.id))];
   const [p, open, docs, materials, updates, deficiencies] = await Promise.all([
     prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { client: true, projectManager: true } }),
     worker ? prisma.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } }) : null,
@@ -133,16 +143,37 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
         {updates.length ? <ul className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-500">{updates.map((u) => <li key={u.id}>{fmtDateTime(u.createdAt)} · {u.kind === "ISSUE" ? (u.resolvedAt ? "issue (resolved)" : "issue") : "update"}: {u.message.slice(0, 80)}</li>)}</ul> : null}
       </Card>
 
-      <Card title="Work order form / customer sign-off" className="scroll-mt-20" id="work-order">
-        <ActionForm action={signoffAction} className="space-y-3">
+      {helperHere && p.jobType === "SERVICE" ? (
+        <Card title="Work order form"><p className="text-sm text-slate-600">You&apos;re the helper on this call, so the lead hand fills in the work order. You can clock out any time while you&apos;re on site.</p></Card>
+      ) : (
+      <Card title="Work order form" className="scroll-mt-20" id="work-order">
+        <ActionForm action={signoffAction} className="space-y-4">
           <input type="hidden" name="projectId" value={p.id} />
-          <Field label="Work performed *"><textarea name="workSummary" required rows={3} className="input" /></Field>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="markedComplete" /> Work order is complete</label>
+          <Field label="Work description *"><textarea name="workSummary" required rows={3} placeholder="What you found and what you did" className="input" /></Field>
+          <Field label="Co-worker(s) on this job">
+            {coWorkers.length === 0 ? <p className="text-sm text-slate-500">No other employees set up.</p> : (
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-200 p-2">{coWorkers.map((w) => (
+                <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="coWorkerIds" value={w.id} defaultChecked={crewIds.has(w.id)} /> {w.name}{crewIds.has(w.id) ? <span className="text-xs text-emerald-700">on this job today</span> : null}</label>
+              ))}</div>
+            )}
+          </Field>
+          <Field label="Materials used"><MaterialRows suggestions={materials.map((m) => m.description)} /></Field>
+          <Field label="Job status *">
+            <select name="jobStatus" required defaultValue="" className="input">
+              <option value="" disabled>Choose…</option>
+              {Object.entries(JOB_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Parking ticket $ (if any)"><input name="parkingAmount" inputMode="decimal" placeholder="0.00" className="input" /></Field>
+            <Field label="Receipt photo"><input type="file" name="parkingReceipt" accept="image/*,application/pdf" capture="environment" className="block w-full text-xs" /></Field>
+          </div>
           <Field label="Customer name (optional, needed only if they sign)"><input name="customerName" className="input" /></Field>
           <SignaturePad name="signatureDataUrl" />
-          <Submit className="btn btn-success w-full">Save</Submit>
+          <Submit className="btn btn-success w-full">Save work order</Submit>
         </ActionForm>
       </Card>
+      )}
 
       {materials.length ? <p className="text-center text-xs text-slate-400">{materials.length} items on this job&apos;s material list · {qty(materials.reduce((s, m) => s + Number(m.quantityRequired), 0))} units total</p> : null}
     </div>

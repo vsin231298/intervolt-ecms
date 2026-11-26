@@ -6,8 +6,8 @@ import { fmtDate, fmtDateTime, today } from "@/lib/dates";
 import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
-import { assignedJobs, needsWorkOrder } from "@/services/labour";
-import { clockOutAction, startServiceCallAction } from "@/app/actions/labour";
+import { assignedJobs, joinableServiceCalls, needsWorkOrder } from "@/services/labour";
+import { clockOutAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
 
 export default async function FieldHome() {
@@ -17,6 +17,7 @@ export default async function FieldHome() {
   const todayHours = worker ? await prisma.timeEntry.aggregate({ where: { workerId: worker.id, date: today() }, _sum: { regularHours: true, overtimeHours: true } }) : null;
   const allowServiceCalls = await getSetting("field.allowServiceCalls");
   const woMissing = open ? await needsWorkOrder(prisma, user.id, open) : false;
+  const joinable = worker && !open && allowServiceCalls ? await joinableServiceCalls(user) : [];
   const todays = jobs.filter((j) => j.today);
   const others = jobs.filter((j) => !j.today);
   return (
@@ -43,15 +44,29 @@ export default async function FieldHome() {
       {worker && !open && allowServiceCalls ? (
         <details className="card p-4">
           <summary className="cursor-pointer font-semibold">Start a service call</summary>
-          <p className="mt-1 text-sm text-slate-600">Use this when you&apos;re sent to a call that isn&apos;t on your schedule. Do it once you&apos;re on site: your location becomes the site, and you&apos;ll need to be within range of it to clock out.</p>
+          <p className="mt-1 text-sm text-slate-600">Do this once you&apos;re on site. Where you&apos;re standing becomes the site, and you&apos;ll need to be within range of it to clock out.</p>
           <div className="mt-3">
             <ClockForm action={startServiceCallAction} label="Start call & clock in" tone="in">
-              <input name="customer" required placeholder="Customer name" className="input" />
-              <input name="address" required placeholder="Address (e.g. 25 King St W, Unit 4)" className="input" />
-              <input name="phone" type="tel" placeholder="Customer phone (optional)" className="input" />
-              <textarea name="problem" rows={2} placeholder="What's the problem? (optional)" className="input" />
+              <input name="customer" required placeholder="Client name *" className="input" />
+              <input name="address" placeholder="Address (optional)" className="input" />
             </ClockForm>
           </div>
+        </details>
+      ) : null}
+      {worker && !open && allowServiceCalls ? (
+        <details className="card p-4" open={joinable.length > 0 && worker.helperOnly}>
+          <summary className="cursor-pointer font-semibold">Join a service call{joinable.length ? ` (${joinable.length})` : ""}</summary>
+          <p className="mt-1 text-sm text-slate-600">For when you&apos;re working with someone who already started the call. You need to be on site.</p>
+          {joinable.length === 0 ? <p className="mt-3 text-sm text-slate-500">Nobody is on a service call right now. If you got there first, use Start a service call instead.</p> : (
+            <ul className="mt-3 space-y-3">{joinable.map((j) => (
+              <li key={j.project.id} className="rounded-lg border border-slate-200 p-3">
+                <div className="font-semibold">{j.project.siteContactName ?? j.project.name}</div>
+                <div className="text-sm text-slate-600">With {j.crew.join(", ")} · since {fmtDateTime(j.since)}</div>
+                {j.project.location ? <div className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{j.project.location}</div> : null}
+                <div className="mt-2"><ClockForm action={joinServiceCallAction} projectId={j.project.id} label="Join & clock in" tone="in" /></div>
+              </li>
+            ))}</ul>
+          )}
         </details>
       ) : null}
       {others.length ? (

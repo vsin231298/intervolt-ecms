@@ -9,7 +9,7 @@ import { uploadDocument } from "@/services/documents";
 
 export async function saveWorkerAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
-    const w = await labour.saveWorker(actor, str(d.workerId) || null, labour.workerSchema.parse({ ...d, active: d.workerId ? zBool.parse(d.active ?? "") : true }));
+    const w = await labour.saveWorker(actor, str(d.workerId) || null, labour.workerSchema.parse({ ...d, active: d.workerId ? zBool.parse(d.active ?? "") : true, helperOnly: zBool.parse(d.helperOnly ?? "") }));
     return d.workerId ? "Employee saved." : { redirectTo: `/people/${w.id}` };
   });
 }
@@ -96,8 +96,20 @@ export async function photosAction(_p: ActionState, fd: FormData) {
   });
 }
 export async function signoffAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d, fd) => {
+    const items = fd.getAll("materialItem").map(String);
+    const qtys = fd.getAll("materialQty").map(String);
+    const materialsUsed = items.map((item, i) => ({ item: item.trim(), quantity: (qtys[i] ?? "").trim() })).filter((m) => m.item);
+    const coWorkerIds = fd.getAll("coWorkerIds").map(String).filter(Boolean);
+    const [receipt] = await filesFrom(fd, "parkingReceipt");
+    const input = labour.signoffSchema.parse({ ...d, markedComplete: zBool.parse(d.markedComplete ?? ""), jobStatus: d.jobStatus || undefined, coWorkerIds, materialsUsed });
+    await labour.completeWorkOrder(actor, str(d.projectId), input, receipt ?? null);
+    return "Work order saved.";
+  });
+}
+export async function joinServiceCallAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
-    await labour.completeWorkOrder(actor, str(d.projectId), labour.signoffSchema.parse({ ...d, markedComplete: zBool.parse(d.markedComplete ?? "") }));
-    return "Work order report saved.";
+    const p = await labour.joinServiceCall(actor, str(d.projectId), geo(d));
+    return { message: `You joined ${p.number} and you're clocked in.`, redirectTo: `/field/${p.id}` };
   });
 }

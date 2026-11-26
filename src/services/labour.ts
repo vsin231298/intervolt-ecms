@@ -27,6 +27,7 @@ export const workerSchema = z.object({
   overtimeRate: zNonNeg,
   userId: zOptId,
   active: z.boolean().default(true),
+  helperOnly: z.boolean().optional(),
 });
 
 export async function saveWorker(actor: Actor, id: string | null, input: z.infer<typeof workerSchema>) {
@@ -249,8 +250,8 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
 }
 
 export const serviceCallSchema = z.object({
-  customer: zText(200).pipe(z.string().min(2, "Enter the customer's name")),
-  address: zText(300).pipe(z.string().min(3, "Enter the address")),
+  customer: zText(200).pipe(z.string().min(2, "Enter the client's name")),
+  address: zOptText(300),
   phone: zOptText(50),
   problem: zOptText(2000),
 });
@@ -279,19 +280,19 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
     const p = await t.project.create({
       data: {
         number, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
-        name: `Service call: ${input.customer}`.slice(0, 200), location: input.address, siteContactName: input.customer, siteContactPhone: input.phone,
+        name: `Service call: ${input.customer}`.slice(0, 200), location: input.address ?? null, siteContactName: input.customer, siteContactPhone: input.phone,
         scope: input.problem, description: `Started from the field app by ${worker.name}. Office to complete client, pricing and PM.`,
         siteLat: geo.lat, siteLng: geo.lng, geofenceRadiusM: radius,
       },
     });
     await t.stageHistory.create({ data: { projectId: p.id, toStage: "EXECUTION", byId: actor.id, note: "Service call started from the field app" } });
-    await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: "Service technician" } });
+    await t.projectMember.create({ data: { projectId: p.id, userId: actor.id, roleLabel: worker.helperOnly ? "Helper" : "Service technician" } });
     await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
     await createCloseoutItems(t, p.id, "SERVICE");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId: p.id, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
-    await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} service call started on site by ${worker.name}: ${input.customer}, ${input.address}`, after: { ...input, siteLat: geo.lat, siteLng: geo.lng, accuracy: geo.accuracy } });
+    await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} service call started on site by ${worker.name}: ${input.customer}${input.address ? `, ${input.address}` : ""}`, after: { ...input, siteLat: geo.lat, siteLng: geo.lng, accuracy: geo.accuracy } });
     await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId: p.id, summary: `${worker.name} clocked in on ${number} (service call start)` });
-    await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], { type: "job.assigned", title: `${worker.name} started service call ${number}: ${input.customer}`, body: `${input.address}${input.problem ? ` · ${input.problem.slice(0, 140)}` : ""}. Add the client, PM and pricing.`, link: `/jobs/${p.id}`, projectId: p.id }, actor.id);
+    await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], { type: "job.assigned", title: `${worker.name} started service call ${number}: ${input.customer}`, body: `${input.address ?? "Address not given"}${input.problem ? ` · ${input.problem.slice(0, 140)}` : ""}. Add the client, PM and pricing.`, link: `/jobs/${p.id}`, projectId: p.id }, actor.id);
     return p;
   });
 }
@@ -314,8 +315,58 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string)
 export async function needsWorkOrder(t: Tx | typeof prisma, userId: string, open: { projectId: string; clockInAt: Date; project: { jobType: string } }) {
   if (open.project.jobType !== "SERVICE") return false;
   if (!(await getSetting("field.requireWorkOrderBeforeClockOut", t))) return false;
+  if (await isHelperOn(t, userId, open.projectId)) return false;
   const done = await t.workOrderSignoff.count({ where: { projectId: open.projectId, completedById: userId, createdAt: { gte: open.clockInAt } } });
   return done === 0;
+}
+
+/** Helpers (helper-only employees, or anyone who joined the call as a helper) don't fill in the work order. */
+export async function isHelperOn(t: Tx | typeof prisma, userId: string, projectId: string) {
+  const [w, m] = await Promise.all([
+    t.worker.findUnique({ where: { userId }, select: { helperOnly: true } }),
+    t.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } }, select: { roleLabel: true } }),
+  ]);
+  return !!w?.helperOnly || m?.roleLabel === "Helper";
+}
+
+/** Service calls someone is clocked in on right now, that a helper can join. */
+export async function joinableServiceCalls(actor: Actor) {
+  const open = await prisma.clockEntry.findMany({
+    where: { clockOutAt: null, worker: { userId: { not: actor.id } }, project: { jobType: "SERVICE", stage: "EXECUTION" } },
+    include: { worker: { select: { name: true } }, project: { select: { id: true, number: true, name: true, location: true, siteContactName: true } } },
+    orderBy: { clockInAt: "desc" },
+  });
+  const map = new Map<string, { project: (typeof open)[number]["project"]; crew: string[]; since: Date }>();
+  for (const c of open) {
+    const e = map.get(c.projectId);
+    if (e) e.crew.push(c.worker.name);
+    else map.set(c.projectId, { project: c.project, crew: [c.worker.name], since: c.clockInAt });
+  }
+  return [...map.values()];
+}
+
+/** Helper joins a service call someone else is on: added to the job as Helper and clocked in (site range applies). */
+export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoPoint) {
+  requirePerm(actor, "field.use");
+  return tx(async (t) => {
+    const worker = await workerForUser(actor.id, t);
+    assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
+    const mine = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
+    if (mine) throw new UserError(`You are still clocked in on ${mine.project.number}. Clock out first.`);
+    const p = await loadProject(t, projectId);
+    assert(p.jobType === "SERVICE" && p.stage === "EXECUTION", "That service call is no longer open.");
+    const lead = await t.clockEntry.findFirst({ where: { projectId, clockOutAt: null }, include: { worker: true } });
+    assert(lead, "Nobody is clocked in on that service call any more, so it can't be joined.");
+    const dist = await assertOnSite(t, p, geo, "clock in");
+    // Helper-only employees join as helpers. Anyone else joins as the technician (and fills in the work order)
+    // only if the call doesn't have a technician yet, e.g. the helper got there first and started it.
+    const hasTech = await t.projectMember.count({ where: { projectId, roleLabel: { not: "Helper" }, user: { worker: { helperOnly: false } } } });
+    const roleLabel = worker.helperOnly || hasTech ? "Helper" : "Service technician";
+    await t.projectMember.upsert({ where: { projectId_userId: { projectId, userId: actor.id } }, create: { projectId, userId: actor.id, roleLabel }, update: {} });
+    const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
+    await audit(t, actor, { action: "clock.in", entityType: "ClockEntry", entityId: c.id, projectId, summary: `${worker.name} joined ${p.number} as ${roleLabel === "Helper" ? "helper" : "technician"} with ${lead.worker.name}${dist != null ? ` (${fmtDistance(dist)} from site)` : ""}` });
+    return p;
+  });
 }
 
 /** Office clock-out for someone who left site without clocking out (no geofence; recorded in the audit trail). */
@@ -387,15 +438,24 @@ export async function resolveFieldIssue(actor: Actor, id: string) {
   });
 }
 
+export const JOB_STATUSES = { COMPLETE: "Complete", RETURN_VISIT: "Needs return visit", WAITING_PARTS: "Waiting for parts", NEEDS_QUOTE: "Needs a quote" } as const;
+
+const money = (v: unknown) => (v === "" || v == null ? undefined : Number(String(v).replace(/[$,\s]/g, "")));
 export const signoffSchema = z.object({
   workSummary: zText(4000).pipe(z.string().min(3, "Describe the work completed")),
   markedComplete: z.boolean().default(false),
+  jobStatus: z.enum(["COMPLETE", "RETURN_VISIT", "WAITING_PARTS", "NEEDS_QUOTE"]).optional(),
+  coWorkerIds: z.array(zId).max(20).optional(),
+  materialsUsed: z.array(z.object({ item: zText(300), quantity: zText(50) })).max(100).optional(),
+  parkingAmount: z.preprocess(money, z.number({ invalid_type_error: "Parking amount must be a number" }).min(0).max(10000).optional()),
   customerName: zOptText(200),
   signatureDataUrl: zOptText(2_000_000),
 });
 
 /** Complete work order (optional) + customer signature (optional). */
-export async function completeWorkOrder(actor: Actor, projectId: string, input: z.infer<typeof signoffSchema>) {
+export async function completeWorkOrder(actor: Actor, projectId: string, input: z.infer<typeof signoffSchema>, parkingReceipt?: UploadFile | null) {
+  if (input.jobStatus) input = { ...input, markedComplete: input.jobStatus === "COMPLETE" };
+  if (parkingReceipt) assert(/^image\//.test(parkingReceipt.type) || /\.(jpe?g|png|heic|webp|pdf)$/i.test(parkingReceipt.name), "The parking receipt must be a photo or PDF.");
   requireAny(actor, ["field.use", "project.manage"]);
   await assertFieldAccess(actor, projectId);
   let sigFile: UploadFile | null = null;
@@ -409,12 +469,16 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
   }
   return tx(async (t) => {
     const p = await loadProject(t, projectId);
-    const s = await t.workOrderSignoff.create({ data: { projectId, completedById: actor.id, workSummary: input.workSummary, markedComplete: input.markedComplete, customerName: input.customerName, signedAt: sigFile ? new Date() : null } });
+    const s = await t.workOrderSignoff.create({ data: { projectId, completedById: actor.id, workSummary: input.workSummary, markedComplete: input.markedComplete, jobStatus: input.jobStatus ?? (input.markedComplete ? "COMPLETE" : null), coWorkerIds: input.coWorkerIds ?? [], materialsUsed: input.materialsUsed?.length ? input.materialsUsed : undefined, parkingAmount: input.parkingAmount, customerName: input.customerName, signedAt: sigFile ? new Date() : null } });
+    if (parkingReceipt) {
+      const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Parking receipt", title: `${p.number} parking receipt${input.parkingAmount != null ? ` $${input.parkingAmount.toFixed(2)}` : ""}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, parkingReceipt, t);
+      await t.workOrderSignoff.update({ where: { id: s.id }, data: { parkingReceiptDocId: up.documentId } });
+    }
     if (sigFile) {
       const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Customer signature", title: `${p.number} customer sign-off — ${input.customerName}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, sigFile, t);
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { signatureDocId: up.documentId } });
     }
-    await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.markedComplete ? "completed" : "visit recorded"}${sigFile ? `, signed by ${input.customerName}` : ""}` });
+    await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.jobStatus ? JOB_STATUSES[input.jobStatus].toLowerCase() : input.markedComplete ? "completed" : "visit recorded"}${input.parkingAmount ? `, parking $${input.parkingAmount.toFixed(2)}` : ""}${sigFile ? `, signed by ${input.customerName}` : ""}` });
     const sn = { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId };
     if (!p.projectManagerId) await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], sn, actor.id);
     else await notifyUsers(t, [p.projectManagerId], { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId }, actor.id);

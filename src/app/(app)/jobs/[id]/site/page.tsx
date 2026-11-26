@@ -5,6 +5,7 @@ import { fmtDate, fmtDateTime, isoDate, today } from "@/lib/dates";
 import { Badge, Card, Drawer, Empty, Field } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DocList } from "@/components/DocList";
+import { JOB_STATUSES } from "@/services/labour";
 import { dailyReportAction, fieldUpdateAction, resolveIssueAction } from "@/app/actions/labour";
 
 export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ show?: string }> }) {
@@ -19,6 +20,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
   ]);
   const people = await prisma.user.findMany({ where: { id: { in: [...reports.map((r) => r.createdById), ...signoffs.map((s) => s.completedById), ...updates.map((u) => u.resolvedById)].filter((x): x is string => !!x) } }, select: { id: true, name: true } });
   const nameOf = (uid: string | null) => people.find((p) => p.id === uid)?.name ?? "—";
+  const coWorkerNames = new Map((await prisma.worker.findMany({ where: { id: { in: signoffs.flatMap((s) => s.coWorkerIds) } }, select: { id: true, name: true } })).map((w) => [w.id, w.name]));
   const r = user.role;
   const openIssues = updates.filter((u) => u.kind === "ISSUE" && !u.resolvedAt).length;
   const live = project.stage !== "CLOSED";
@@ -100,11 +102,17 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                 <li key={s.id} className="py-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <b>{fmtDateTime(s.createdAt)}</b> by {nameOf(s.completedById)}
-                    {s.markedComplete ? <Badge tone="green">Work order complete</Badge> : <Badge>Progress report</Badge>}
+                    {s.jobStatus && s.jobStatus in JOB_STATUSES ? <Badge tone={s.jobStatus === "COMPLETE" ? "green" : "amber"}>{JOB_STATUSES[s.jobStatus as keyof typeof JOB_STATUSES]}</Badge>
+                      : s.markedComplete ? <Badge tone="green">Work order complete</Badge> : <Badge>Progress report</Badge>}
                     {s.signedAt ? <Badge tone="blue">Signed by {s.customerName ?? "customer"}</Badge> : null}
                   </div>
                   <p className="mt-1 whitespace-pre-line">{s.workSummary}</p>
-                  {s.signatureDocId ? <DocList entityType="WorkOrderSignoff" entityId={s.id} /> : null}
+                  {s.coWorkerIds.length ? <p className="mt-1 text-slate-600">Co-worker(s): {s.coWorkerIds.map((id) => coWorkerNames.get(id) ?? "removed employee").join(", ")}</p> : null}
+                  {Array.isArray(s.materialsUsed) && s.materialsUsed.length ? (
+                    <div className="mt-1 text-slate-600">Materials used: {(s.materialsUsed as { item: string; quantity: string }[]).map((m) => `${m.quantity ? `${m.quantity} × ` : ""}${m.item}`).join("; ")}</div>
+                  ) : null}
+                  {s.parkingAmount != null ? <p className="mt-1 text-slate-600">Parking: ${Number(s.parkingAmount).toFixed(2)}{s.parkingReceiptDocId ? " (receipt below)" : " (no receipt)"}</p> : null}
+                  {s.signatureDocId || s.parkingReceiptDocId ? <DocList entityType="WorkOrderSignoff" entityId={s.id} /> : null}
                 </li>
               ))}
             </ul>

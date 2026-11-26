@@ -23,7 +23,7 @@ const GROUPS: { title: string; note?: string; keys: { key: SettingKey; label: st
     { key: "labour.burdenPercent", label: "Labour burden % added to wage cost" },
     { key: "field.geofenceEnabled", label: "Only allow clock in / out at the job site", hint: "Uses the phone's GPS and the site pin set on each job's Info tab" },
     { key: "field.geofenceRadiusMeters", label: "Clock-in range (metres from the site pin)", hint: "Each job can override this on its Info tab" },
-    { key: "field.allowServiceCalls", label: "Let field staff start unplanned service calls from the phone", hint: "Creates a service work order pinned where they stand and clocks them in; the office is notified" },
+    { key: "field.allowServiceCalls", label: "Let field staff start a service call from the phone", hint: "Creates a service work order pinned where they stand and clocks them in; the office is notified" },
   ] },
   { title: "Procurement", keys: [
     { key: "procurement.blockDeliveryUntilDrawingsApproved", label: "Hold deliveries until supplier shop drawings are approved" },

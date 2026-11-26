@@ -39,7 +39,7 @@ export default async function FieldHome() {
       </section>
       {worker && !open && allowServiceCalls ? (
         <details className="card p-4">
-          <summary className="cursor-pointer font-semibold">Start an unplanned service call</summary>
+          <summary className="cursor-pointer font-semibold">Start a service call</summary>
           <p className="mt-1 text-sm text-slate-600">Use this when you&apos;re sent to a call that isn&apos;t on your schedule. Do it once you&apos;re on site: your location becomes the site, and you&apos;ll need to be within range of it to clock out.</p>
           <div className="mt-3">
             <ClockForm action={startServiceCallAction} label="Start call & clock in" tone="in">

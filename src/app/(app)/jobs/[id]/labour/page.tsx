@@ -8,7 +8,8 @@ import { Card, Drawer, Empty, Field, Options, Progress, Stat } from "@/component
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { TimeEntries } from "@/components/TimeEntries";
 import { labourSummary } from "@/services/labour";
-import { addTimeAction, removeAssignmentAction, scheduleWorkersAction, updateAssignmentAction } from "@/app/actions/labour";
+import { addTimeAction, scheduleWorkersAction } from "@/app/actions/labour";
+import { ShiftEditForm } from "@/components/ShiftEdit";
 
 export default async function LabourPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser("jobs.view");
@@ -92,13 +93,7 @@ export default async function LabourPage({ params }: { params: Promise<{ id: str
                           {a.worker.name} · {a.startTime ? `${a.startTime}–${a.endTime} · ` : ""}{qty(a.hours)}h{a.notes ? ` · ${a.notes}` : ""}{a.publishedAt ? "" : " · draft"}
                           {canSchedule ? (
                             <Drawer label="✎" className="text-slate-400 hover:text-brand-600">
-                              <ActionForm action={updateAssignmentAction} className="space-y-2" resetOnSuccess={false}>
-                                <input type="hidden" name="id" value={a.id} />
-                                <Field label="Hours"><input name="hours" defaultValue={a.hours.toString()} className="input" /></Field>
-                                <Field label="Notes"><input name="notes" defaultValue={a.notes ?? ""} className="input" /></Field>
-                                <Submit>Save</Submit>
-                              </ActionForm>
-                              <ActionForm action={removeAssignmentAction} className="mt-2"><input type="hidden" name="id" value={a.id} /><Submit className="btn btn-ghost btn-sm text-red-600">Remove from schedule</Submit></ActionForm>
+                              <ShiftEditForm a={a} />
                             </Drawer>
                           ) : null}
                         </span>

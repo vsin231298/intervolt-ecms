@@ -162,14 +162,55 @@ export async function myWeek(workerId: string, from = today()) {
   });
 }
 
-export async function updateAssignment(actor: Actor, id: string, hours: number, notes?: string) {
+export const editShiftSchema = z.object({
+  id: zId,
+  date: zDate.optional(),
+  projectId: zOptId,
+  startTime: hhmm,
+  endTime: hhmm,
+  breakMin: z.coerce.number().int().min(0).max(480).default(0),
+  hours: zNonNeg.optional(),
+  notes: zOptText(300),
+});
+
+const fmtShift = (a: { startTime: string | null; endTime: string | null; hours: unknown }) => (a.startTime ? `${a.startTime}-${a.endTime}` : `${d(a.hours as never)}h`);
+
+/**
+ * Edit a shift at any time. A published shift stays published and the worker gets a
+ * "Schedule changed" alert; a draft stays a draft (no alert).
+ */
+export async function updateAssignment(actor: Actor, raw: z.input<typeof editShiftSchema>) {
+  const input = editShiftSchema.parse(raw);
   requirePerm(actor, "labour.schedule");
   return tx(async (t) => {
-    const a = await t.labourAssignment.findUnique({ where: { id }, include: { worker: true } });
+    const a = await t.labourAssignment.findUnique({ where: { id: input.id }, include: { worker: true, project: true } });
     if (!a) throw new NotFoundError("Schedule entry");
+    if ((input.startTime && !input.endTime) || (!input.startTime && input.endTime)) throw new UserError("Enter both start and end time, or neither.");
+    const hours = input.startTime && input.endTime ? shiftHours(input.startTime, input.endTime, input.breakMin) : (input.hours ?? Number(a.hours));
     assert(hours > 0 && hours <= 24, "Hours must be between 0 and 24.");
-    await t.labourAssignment.update({ where: { id }, data: { hours, notes, startTime: null, endTime: null, breakMin: 0, publishedAt: null } });
-    await audit(t, actor, { action: "schedule.update", entityType: "LabourAssignment", entityId: id, projectId: a.projectId, summary: `${a.worker.name} ${a.date.toISOString().slice(0, 10)}: hours ${d(a.hours)} → ${hours}`, before: a, after: { hours, notes } });
+    const date = input.date ?? a.date;
+    const projectId = input.projectId ?? a.projectId;
+    const project = projectId === a.projectId ? a.project : await loadProject(t, projectId);
+    if (projectId !== a.projectId) assert(["ACTIVATION", "EXECUTION", "CLOSEOUT"].includes(project.stage), "Workers can only be scheduled on active jobs.");
+    if (projectId !== a.projectId || date.getTime() !== a.date.getTime()) {
+      const clash = await t.labourAssignment.findFirst({ where: { workerId: a.workerId, date, projectId, id: { not: a.id } } });
+      if (clash) throw new UserError(`${a.worker.name} already has a shift on that job that day.`);
+    }
+    const data = {
+      date, projectId, hours, notes: input.notes ?? null,
+      startTime: input.startTime ?? null, endTime: input.endTime ?? null, breakMin: input.startTime ? input.breakMin : 0,
+    };
+    await t.labourAssignment.update({ where: { id: a.id }, data });
+    const changes: string[] = [];
+    if (date.getTime() !== a.date.getTime()) changes.push(`moved to ${shortDay(date)}`);
+    if (projectId !== a.projectId) changes.push(`now at ${project.number} ${project.name}`);
+    if (fmtShift(data) !== fmtShift(a)) changes.push(fmtShift(data));
+    if ((data.notes ?? "") !== (a.notes ?? "")) changes.push(data.notes ? `note: ${data.notes}` : "note removed");
+    if (a.publishedAt && a.worker.userId && changes.length) {
+      const days = [...new Set([shortDay(a.date), shortDay(date)])].join(", ");
+      await notifyUsers(t, [a.worker.userId], { type: "schedule.changed", title: `Schedule changed: ${days}`, body: changes.join(" · "), link: "/field" }, actor.id);
+    }
+    await audit(t, actor, { action: "schedule.update", entityType: "LabourAssignment", entityId: a.id, projectId, summary: `${a.worker.name} ${shortDay(a.date)}: ${changes.join(", ") || "no change"}`, before: a, after: data });
   });
 }
 

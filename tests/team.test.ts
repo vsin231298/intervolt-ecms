@@ -57,6 +57,27 @@ describe("schedule: draft then publish", () => {
     expect((await prisma.notification.findFirstOrThrow({ where: { userId: jordan.id }, orderBy: { createdAt: "desc" } })).title).toMatch(/^Schedule changed: /);
     expect(await prisma.notification.count({ where: { userId: andy.id } })).toBe(1);
   });
+
+  it("a published shift can be edited anytime: stays published and the worker is told", async () => {
+    const t0 = today();
+    const a = await prisma.labourAssignment.findFirstOrThrow({ where: { workerId: wA, date: addDays(t0, 2) } });
+    expect(a.publishedAt).not.toBeNull();
+    const before = await prisma.notification.count({ where: { userId: andy.id } });
+    await labour.updateAssignment(pm, { id: a.id, date: addDays(t0, 3), startTime: "06:00", endTime: "14:30", breakMin: "30", notes: "Pick up wire at shop" } as never);
+    const b = await prisma.labourAssignment.findUniqueOrThrow({ where: { id: a.id } });
+    expect(b.publishedAt).not.toBeNull();
+    expect(b.startTime).toBe("06:00");
+    expect(Number(b.hours)).toBe(8);
+    expect(b.date.getTime()).toBe(addDays(t0, 3).getTime());
+    const n = await prisma.notification.findMany({ where: { userId: andy.id }, orderBy: { createdAt: "desc" } });
+    expect(n).toHaveLength(before + 1);
+    expect(n[0].title).toMatch(/^Schedule changed: /);
+    expect(n[0].body).toMatch(/moved to .*06:00-14:30.*Pick up wire/);
+    // saving with no change sends nothing
+    await labour.updateAssignment(pm, { id: a.id, date: addDays(t0, 3), startTime: "06:00", endTime: "14:30", breakMin: "30", notes: "Pick up wire at shop" } as never);
+    expect(await prisma.notification.count({ where: { userId: andy.id } })).toBe(before + 1);
+    await expect(labour.updateAssignment(jordan, { id: a.id, startTime: "06:00", endTime: "14:00" } as never)).rejects.toThrow();
+  });
 });
 
 describe("time off", () => {

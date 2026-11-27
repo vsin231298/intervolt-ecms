@@ -21,7 +21,7 @@ export async function scheduleWorkersAction(_p: ActionState, fd: FormData) {
   });
 }
 export async function updateAssignmentAction(_p: ActionState, fd: FormData) {
-  return run(fd, async (actor, d) => void (await labour.updateAssignment(actor, str(d.id), Number(d.hours), str(d.notes) || undefined)));
+  return run(fd, async (actor, d) => { await labour.updateAssignment(actor, d as never); return "Shift saved."; });
 }
 export async function removeAssignmentAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => void (await labour.removeAssignment(actor, str(d.id))));

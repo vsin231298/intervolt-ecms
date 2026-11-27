@@ -13,6 +13,7 @@ const ROLE_HELP: Record<Role, string> = {
   ESTIMATOR: "Estimates, BOMs, supplier quotes and tender submissions",
   PROCUREMENT: "Purchase orders, deliveries, shop drawing tracking, supplier invoices",
   ACCOUNTING: "Billing, invoices, payments, supplier payments, finance reports",
+  OFFICE_ADMIN: "Sees Ready to bill work orders, invoices them in QuickBooks, marks them billed",
   SITE_SUPERVISOR: "Crew schedule, timesheets, daily reports, RFIs, deficiencies",
   ELECTRICIAN: "Field app only: assigned jobs, clock in/out, photos, materials, sign-off",
   READ_ONLY: "View jobs and documents; no changes",

@@ -18,7 +18,7 @@ export default async function OfficeWorkOrder({ params }: { params: Promise<{ id
         crumbs={[{ href: "/work-orders", label: "Work Orders" }]}
         title={`${s.project.number} ${s.project.name}`}
         subtitle={`${s.submittedBy} · ${fmtDateTime(s.createdAt)}${s.forDate ? ` · requested, for ${s.forDate.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : ""}${s.project.location ? ` · ${s.project.location}` : ""}`}
-        actions={<Link className="btn btn-secondary" href={`/jobs/${s.project.id}/site`}>Open job</Link>}
+        actions={<div className="flex gap-2"><Link className="btn btn-primary" href={`/billing/${s.project.id}`}>Billing sheet</Link><Link className="btn btn-secondary" href={`/jobs/${s.project.id}/site`}>Open job</Link></div>}
       />
       <WorkOrderView s={s} submittedBy={s.submittedBy} />
     </div>

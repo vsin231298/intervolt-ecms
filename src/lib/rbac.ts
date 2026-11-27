@@ -81,6 +81,11 @@ const MATRIX: Record<Role, Set<Permission>> = {
     "closeout.edit", "documents.view", "documents.upload", "directory.edit", "company.documents", "calendar.edit",
     "reports.view", "time.manage",
   ]),
+  // Office admin: sees the office side, invoices Ready-to-bill work in QuickBooks and marks them billed.
+  OFFICE_ADMIN: new Set<Permission>([
+    "jobs.view", "financials.view", "billing.edit", "documents.view", "documents.upload", "company.documents",
+    "directory.edit", "calendar.edit", "reports.view",
+  ]),
   SITE_SUPERVISOR: new Set<Permission>([
     "jobs.view", "labour.schedule", "time.submit", "dailyreport.submit", "rfi.create", "procurement.receive",
     "materials.edit", "inspection.edit", "closeout.edit", "documents.view", "documents.upload", "field.use",
@@ -104,6 +109,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   ESTIMATOR: "Estimator",
   PROCUREMENT: "Procurement Manager",
   ACCOUNTING: "Accounting",
+  OFFICE_ADMIN: "Office Admin",
   SITE_SUPERVISOR: "Site Supervisor",
   ELECTRICIAN: "Electrician",
   READ_ONLY: "Read-only User",

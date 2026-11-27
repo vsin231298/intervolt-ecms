@@ -168,29 +168,3 @@ export async function fileWorkOrder(actor: Actor, signoffId: string, target: str
     return done(to.id, `Visit moved from ${src.number} to ${to.number}`);
   });
 }
-
-/** Tick / untick Billed. Billed jobs drop off the "Existing job" list. */
-export async function setBilled(actor: Actor, projectId: string, billed: boolean) {
-  requirePerm(actor, "billing.prepare");
-  return tx(async (t) => {
-    const p = await t.project.findUnique({ where: { id: projectId } });
-    if (!p) throw new NotFoundError("Job");
-    assert(!p.pendingReview, "File its work order first.");
-    await t.project.update({ where: { id: projectId }, data: billed ? { billedAt: new Date(), billedById: actor.id } : { billedAt: null, billedById: null } });
-    await audit(t, actor, { action: billed ? "job.billed" : "job.unbilled", entityType: "Project", entityId: projectId, projectId, summary: `${p.number} ${billed ? "marked billed" : "billed tick removed"}` });
-  });
-}
-
-/** Service calls and small jobs for the "To bill" tab: unbilled first (Complete on top), then recently billed. */
-export async function billingList(actor: Actor) {
-  requirePerm(actor, "jobs.view");
-  const since = addDays(new Date(), -60);
-  const jobs = await prisma.project.findMany({
-    where: { jobType: { in: [...SMALL] }, pendingReview: false, mergedIntoId: null, OR: [{ billedAt: null, stage: { in: [...OPEN, "CLOSED"] }, signoffs: { some: {} } }, { billedAt: { gte: since } }] },
-    select: { id: true, number: true, name: true, location: true, billedAt: true, siteContactName: true, client: { select: { name: true } }, _count: { select: { signoffs: true } }, signoffs: { orderBy: { createdAt: "desc" }, take: 1, select: { createdAt: true, jobStatus: true, reviewedAt: true } } },
-    orderBy: { number: "desc" }, take: 300,
-  });
-  const rows = jobs.map((j) => ({ ...j, customer: j.client?.name ?? j.siteContactName, last: j.signoffs[0] ?? null }));
-  const rank = (r: (typeof rows)[number]) => (r.billedAt ? 2 : r.last?.jobStatus === "COMPLETE" ? 0 : 1);
-  return rows.sort((a, b) => rank(a) - rank(b) || (b.last?.createdAt.getTime() ?? 0) - (a.last?.createdAt.getTime() ?? 0));
-}

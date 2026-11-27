@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { fmtDateTime, parseDate } from "@/lib/dates";
+import { addDays, fmtDateTime, parseDate } from "@/lib/dates";
 import { Badge, Card, Drawer, Empty, Field, PageHeader, Tabs } from "@/components/ui";
-import { BillingList, ReviewQueue } from "@/components/WorkOrderReview";
-import { billingList, reviewQueue } from "@/services/workorders";
+import { ReviewQueue } from "@/components/WorkOrderReview";
+import { reviewQueue } from "@/services/workorders";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { can } from "@/lib/rbac";
 import { isoDate, today } from "@/lib/dates";
@@ -13,14 +13,22 @@ import { StatusBadge } from "@/components/WorkOrderView";
 import { JOB_STATUSES, allWorkOrders, officeWorkOrderRequests } from "@/services/labour";
 
 /** Office: every work order the guys have submitted. */
-export default async function WorkOrders({ searchParams }: { searchParams: Promise<{ tab?: string; who?: string; status?: string; from?: string; to?: string; q?: string }> }) {
+export default async function WorkOrders({ searchParams }: { searchParams: Promise<{ tab?: string; week?: string; who?: string; status?: string; from?: string; to?: string; q?: string }> }) {
   const user = await requireUser("jobs.view");
   const sp = await searchParams;
+  // Week picker: Monday of the chosen week → Mon..Sun
+  const monday = (dt: Date) => addDays(dt, -((dt.getUTCDay() + 6) % 7));
+  const weekStart = sp.week ? monday(parseDate(sp.week) ?? today()) : null;
+  const from = weekStart ?? parseDate(sp.from), to = weekStart ? addDays(weekStart, 6) : parseDate(sp.to);
   const [list, people] = await Promise.all([
-    allWorkOrders(user, { userId: sp.who || undefined, status: sp.status || undefined, from: parseDate(sp.from) ?? undefined, to: parseDate(sp.to) ?? undefined, q: sp.q?.trim() || undefined }),
+    allWorkOrders(user, { userId: sp.who || undefined, status: sp.status || undefined, from: from ?? undefined, to: to ?? undefined, q: sp.q?.trim() || undefined }),
     prisma.user.findMany({ where: { id: { in: (await prisma.workOrderSignoff.findMany({ distinct: ["completedById"], select: { completedById: true } })).map((s) => s.completedById) } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
-  const filtered = !!(sp.who || sp.status || sp.from || sp.to || sp.q);
+  const filtered = !!(sp.who || sp.status || sp.from || sp.to || sp.q || sp.week);
+  const thisWeek = monday(today());
+  const wk = weekStart ?? thisWeek;
+  const weekHref = (w: Date | null) => "/work-orders?" + new URLSearchParams(Object.entries({ tab: "all", week: w ? isoDate(w) : undefined, who: sp.who, status: sp.status, q: sp.q }).filter(([, v]) => v) as [string, string][]).toString();
+  const short = (dt: Date) => dt.toLocaleDateString("en-CA", { month: "short", day: "numeric", timeZone: "UTC" });
   const canAsk = can(user.role, "labour.schedule");
   const [requests, crew, jobs] = await Promise.all([
     officeWorkOrderRequests(user),
@@ -29,8 +37,7 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
   ]);
   const openReq = requests.filter((r) => !r.doneAt);
   const queue = await reviewQueue(user);
-  const tab = sp.tab === "review" || sp.tab === "bill" || sp.tab === "all" ? sp.tab : filtered ? "all" : queue.length ? "review" : "all";
-  const bill = tab === "bill" ? await billingList(user) : [];
+  const tab = sp.tab === "review" || sp.tab === "all" ? sp.tab : filtered ? "all" : queue.length ? "review" : "all";
   const day = (d: Date) => d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
   return (
     <div className="space-y-4">
@@ -50,10 +57,8 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
       <Tabs current={tab} items={[
         { key: "review", label: "Needs review", href: "/work-orders?tab=review", count: queue.length },
         { key: "all", label: "All work orders", href: "/work-orders?tab=all" },
-        { key: "bill", label: "To bill", href: "/work-orders?tab=bill" },
       ]} />
       {tab === "review" ? <ReviewQueue items={queue} canFile={can(user.role, "jobs.create")} /> : null}
-      {tab === "bill" ? <BillingList rows={bill} canBill={can(user.role, "billing.prepare")} /> : null}
       {tab === "all" ? <>
       {requests.length ? (
         <Card title={`Requested${openReq.length ? ` · ${openReq.length} waiting` : ""}`} bodyClass="p-0">
@@ -72,13 +77,22 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
           ))}</ul>
         </Card>
       ) : null}
+      <div className="card flex flex-wrap items-center gap-2 p-3">
+        <span className="text-sm font-semibold">Week</span>
+        <Link className="btn btn-secondary px-4 py-2 text-lg" href={weekHref(addDays(wk, -7))} aria-label="Previous week">‹</Link>
+        <Link className={"btn px-4 py-2 " + (weekStart ? "btn-primary" : "btn-secondary")} href={weekHref(wk)}>{short(wk)} – {short(addDays(wk, 6))}</Link>
+        <Link className="btn btn-secondary px-4 py-2 text-lg" href={weekHref(addDays(wk, 7))} aria-label="Next week">›</Link>
+        <Link className="btn btn-ghost btn-sm" href={weekHref(thisWeek)}>This week</Link>
+        {weekStart ? <Link className="btn btn-ghost btn-sm" href={weekHref(null)}>All dates</Link> : null}
+        {weekStart ? <span className="ml-auto text-sm text-slate-600"><b>{list.length}</b> work order{list.length === 1 ? "" : "s"} this week</span> : null}
+      </div>
       <form className="card grid gap-2 p-3 sm:grid-cols-6">
         <input type="hidden" name="tab" value="all" />
         <input name="q" defaultValue={sp.q} placeholder="Search job, customer, address, work…" className="input sm:col-span-2" />
         <select name="who" defaultValue={sp.who ?? ""} className="input"><option value="">Everyone</option>{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <select name="status" defaultValue={sp.status ?? ""} className="input"><option value="">Any status</option>{Object.entries(JOB_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <input type="date" name="from" defaultValue={sp.from} className="input" aria-label="From" />
-        <input type="date" name="to" defaultValue={sp.to} className="input" aria-label="To" />
+        <input type="date" name="from" defaultValue={from ? isoDate(from) : ""} className="input" aria-label="From" />
+        <input type="date" name="to" defaultValue={to ? isoDate(to) : ""} className="input" aria-label="To" />
         <div className="flex gap-2 sm:col-span-6"><button className="btn btn-secondary btn-sm">Filter</button>{filtered ? <Link href="/work-orders?tab=all" className="btn btn-ghost btn-sm">Clear</Link> : null}</div>
       </form>
       <Card bodyClass="overflow-x-auto p-0">

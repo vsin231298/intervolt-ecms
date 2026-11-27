@@ -113,10 +113,3 @@ export async function fileWorkOrderAction(_p: ActionState, fd: FormData) {
     return `Filed under ${p?.number}.`;
   });
 }
-export async function setBilledAction(_p: ActionState, fd: FormData) {
-  return run(fd, async (actor, d) => {
-    const billed = str(d.billed) === "1";
-    await workorders.setBilled(actor, str(d.projectId), billed);
-    return billed ? "Marked billed." : "Billed tick removed.";
-  });
-}

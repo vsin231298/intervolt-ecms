@@ -753,7 +753,8 @@ export async function allWorkOrders(actor: Actor, f: { userId?: string; status?:
   const where: Prisma.WorkOrderSignoffWhereInput = {
     ...(f.userId ? { completedById: f.userId } : {}),
     ...(f.status ? { jobStatus: f.status } : {}),
-    ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lt: addDays(f.to, 1) } : {}) } } : {}),
+    // dates are calendar days in the company time zone
+    ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: parseDateTimeLocal(`${f.from.toISOString().slice(0, 10)}T00:00`)! } : {}), ...(f.to ? { lt: parseDateTimeLocal(`${addDays(f.to, 1).toISOString().slice(0, 10)}T00:00`)! } : {}) } } : {}),
     ...(f.q ? { OR: [
       { workSummary: { contains: f.q, mode: "insensitive" } },
       { customerName: { contains: f.q, mode: "insensitive" } },

@@ -4,8 +4,8 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { StatusBadge } from "@/components/WorkOrderView";
 import { fmtDateTime } from "@/lib/dates";
 import { JOB_STATUSES } from "@/services/labour";
-import type { reviewQueue, billingList } from "@/services/workorders";
-import { fileWorkOrderAction, setBilledAction } from "@/app/actions/team";
+import type { reviewQueue } from "@/services/workorders";
+import { fileWorkOrderAction } from "@/app/actions/team";
 
 const day = (d: Date) => d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const status = (s: string | null) => (s && s in JOB_STATUSES ? JOB_STATUSES[s as keyof typeof JOB_STATUSES] : null);
@@ -79,37 +79,5 @@ function Option({ value, def, title, sub }: { value: string; def: string; title:
       <input type="radio" name="target" value={value} defaultChecked={value === def} className="mt-1" />
       <span className="min-w-0 flex-1">{title}<span className="block text-xs text-slate-500">{sub}</span></span>
     </label>
-  );
-}
-
-type Row = Awaited<ReturnType<typeof billingList>>[number];
-
-/** Office: tick Billed once invoiced. */
-export function BillingList({ rows, canBill }: { rows: Row[]; canBill: boolean }) {
-  if (!rows.length) return <Empty>Nothing to bill.</Empty>;
-  return (
-    <Card bodyClass="overflow-x-auto p-0">
-      <table className="table">
-        <thead><tr><th>WO #</th><th>Customer</th><th>Address</th><th>Visits</th><th>Last status</th><th>Billed</th></tr></thead>
-        <tbody>{rows.map((r) => (
-          <tr key={r.id} className={r.billedAt ? "text-slate-400" : ""}>
-            <td><Link className="link font-mono text-xs" href={`/work-orders?tab=all&q=${encodeURIComponent(r.number)}`}>{r.number}</Link></td>
-            <td className="font-medium">{r.customer ?? r.name}</td>
-            <td className="text-sm">{r.location}</td>
-            <td>{r._count.signoffs}{r.last ? <span className="text-xs text-slate-500"> · last {day(r.last.createdAt)}</span> : null}</td>
-            <td>{r.last ? <StatusBadge status={r.last.jobStatus} /> : "—"}</td>
-            <td>
-              {canBill ? (
-                <ActionForm action={setBilledAction} className="flex items-center gap-2">
-                  <input type="hidden" name="projectId" value={r.id} />
-                  <input type="hidden" name="billed" value={r.billedAt ? "0" : "1"} />
-                  <Submit className={r.billedAt ? "btn btn-ghost btn-sm" : "btn btn-secondary btn-sm"}>{r.billedAt ? `✓ Billed ${day(r.billedAt)}` : "Mark billed"}</Submit>
-                </ActionForm>
-              ) : r.billedAt ? `Billed ${day(r.billedAt)}` : "—"}
-            </td>
-          </tr>
-        ))}</tbody>
-      </table>
-    </Card>
   );
 }

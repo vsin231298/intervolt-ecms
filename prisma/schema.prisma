@@ -18,6 +18,7 @@ enum Role {
   ESTIMATOR
   PROCUREMENT
   ACCOUNTING
+  OFFICE_ADMIN
   SITE_SUPERVISOR
   ELECTRICIAN
   READ_ONLY
@@ -414,6 +415,7 @@ model Project {
   fieldUpdates      FieldUpdate[]
   signoffs          WorkOrderSignoff[]
   workOrderRequests WorkOrderRequest[]
+  billingSheet      BillingSheet?
   /// Service call started on a phone: temporary NEW-n number until the office files its work order
   pendingReview     Boolean             @default(false)
   /// Office ticked Billed: drops out of the "Existing job" list
@@ -1573,4 +1575,43 @@ model WorkOrderNote {
   createdAt DateTime         @default(now())
 
   @@index([signoffId])
+}
+
+/// PM's billing copy of a service call / small job: the guys' work orders stay as written.
+/// DRAFT → READY (to bill) → BILLED (office admin, in QuickBooks). PM can reopen READY; CANCELLED = no bill.
+model BillingSheet {
+  id            String             @id @default(cuid())
+  projectId     String             @unique
+  project       Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// DRAFT | READY | BILLED | CANCELLED
+  status        String             @default("DRAFT")
+  description   String             @default("")
+  readyAt       DateTime?
+  readyById     String?
+  billedAt      DateTime?
+  billedById    String?
+  qbInvoiceNo   String?
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+  updatedById   String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  lines         BillingSheetLine[]
+
+  @@index([status])
+}
+
+model BillingSheetLine {
+  id          String       @id @default(cuid())
+  sheetId     String
+  sheet       BillingSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  /// LABOUR | MATERIAL | OTHER
+  kind        String
+  sortOrder   Int          @default(0)
+  date        DateTime?    @db.Date
+  who         String?
+  description String
+  quantity    Decimal      @db.Decimal(12, 2)
+  unitPrice   Decimal?     @db.Decimal(12, 2)
 }

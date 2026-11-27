@@ -38,6 +38,7 @@ async function main() {
   const est1 = await user("Mark Chen", "estimator@intervolt.demo", "ESTIMATOR");
   const procU = await user("Dana Brooks", "procurement@intervolt.demo", "PROCUREMENT");
   const acct = await user("Lisa Wong", "accounting@intervolt.demo", "ACCOUNTING");
+  await user("Nina Office", "office@intervolt.demo", "OFFICE_ADMIN");
   const sup = await user("Tom Reid", "supervisor@intervolt.demo", "SITE_SUPERVISOR");
   const elec = await user("Jordan Silva", "electrician@intervolt.demo", "ELECTRICIAN");
   await user("Owner View", "readonly@intervolt.demo", "READ_ONLY");
@@ -149,7 +150,7 @@ async function main() {
 
   await admin.saveEvent(pm, null, { title: "Riverside coordination meeting", startsAt: addDays(new Date(), 1), endsAt: new Date(addDays(new Date(), 1).getTime() + 3600_000), location: "Site trailer", projectId: p.id, attendeeIds: [sup.id, procU.id] });
 
-  console.log(`Demo data loaded. Sign in as admin@intervolt.demo (or pm@, estimator@, procurement@, accounting@, supervisor@, electrician@, readonly@) with password ${PASSWORD}`);
+  console.log(`Demo data loaded. Sign in as admin@intervolt.demo (or pm@, estimator@, procurement@, accounting@, office@, supervisor@, electrician@, readonly@) with password ${PASSWORD}`);
 }
 
 main().then(() => prisma.$disconnect()).catch(async (e) => {

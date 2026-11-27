@@ -20,6 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     can(r, "labour.schedule") ? prisma.timeOff.count({ where: { status: "PENDING" } }) : 0,
   ]);
   const woReview = !isFieldOnly(r) && can(r, "jobs.view") ? await prisma.workOrderSignoff.count({ where: { reviewedAt: null } }) : 0;
+  const readyToBill = can(r, "billing.edit") ? await prisma.billingSheet.count({ where: { status: "READY" } }) : 0;
   const items: NavItem[] = [];
   const add = (cond: boolean, it: NavItem) => cond && items.push(it);
   const office = !isFieldOnly(r);
@@ -34,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   add(can(r, "workers.edit") || can(r, "jobs.view"), { href: "/people", label: "Employees", icon: "HardHat", section: "People & Time" });
   // Office: what the guys sent in.
   add(office && can(r, "jobs.view"), { href: "/work-orders", label: "Work Orders", icon: "ClipboardList", section: "People & Time", badge: woReview || undefined });
+  add(office && (can(r, "project.manage") || can(r, "billing.edit")), { href: "/billing", label: "Billing", icon: "Receipt", section: "People & Time", badge: readyToBill || undefined });
   add(office && can(r, "labour.schedule"), { href: "/schedule?view=timeoff", label: "Time Off Requests", icon: "CalendarX", section: "People & Time", badge: pendingOff || undefined });
   // Field: only for people who clock in (field staff, or office staff linked to an employee).
   const clocksIn = can(r, "field.use") && (!office || linkedWorker > 0);

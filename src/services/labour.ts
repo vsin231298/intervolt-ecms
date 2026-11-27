@@ -600,6 +600,38 @@ export async function resolveFieldIssue(actor: Actor, id: string) {
   });
 }
 
+/** Work orders this person submitted (field app "My work orders"), newest first. */
+export async function myWorkOrders(actor: Actor) {
+  requirePerm(actor, "field.use");
+  return prisma.workOrderSignoff.findMany({ where: { completedById: actor.id }, orderBy: { createdAt: "desc" }, take: 200, include: { project: { select: { id: true, number: true, name: true, location: true } }, _count: { select: { notes: true } } } });
+}
+
+/** One of this person's own submitted work orders; anyone else's is "not found". */
+export async function myWorkOrder(actor: Actor, id: string) {
+  requirePerm(actor, "field.use");
+  const s = await prisma.workOrderSignoff.findUnique({ where: { id }, include: { project: { select: { id: true, number: true, name: true, location: true } }, notes: { orderBy: { createdAt: "asc" } } } });
+  if (!s || s.completedById !== actor.id) throw new NotFoundError("Work order");
+  return s;
+}
+
+/** Add a note to a submitted work order. The original stays as submitted; the office is notified. */
+export async function addWorkOrderNote(actor: Actor, signoffId: string, text: string) {
+  requirePerm(actor, "field.use");
+  const body = text.trim();
+  assert(body.length >= 2, "Write a note.");
+  assert(body.length <= 2000, "Note is too long.");
+  return tx(async (t) => {
+    const s = await t.workOrderSignoff.findUnique({ where: { id: signoffId }, include: { project: true } });
+    if (!s || s.completedById !== actor.id) throw new NotFoundError("Work order");
+    const n = await t.workOrderNote.create({ data: { signoffId, authorId: actor.id, text: body } });
+    await audit(t, actor, { action: "workorder.note", entityType: "WorkOrderSignoff", entityId: signoffId, projectId: s.projectId, summary: `${s.project.number}: ${actor.name} added a note to their work order` });
+    const msg = { type: "workorder.signoff", title: `${s.project.number}: note added to work order`, body: `${actor.name}: ${body.slice(0, 200)}`, link: `/jobs/${s.projectId}/site`, projectId: s.projectId };
+    if (s.project.projectManagerId) await notifyUsers(t, [s.project.projectManagerId], msg, actor.id);
+    else await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], msg, actor.id);
+    return n;
+  });
+}
+
 export const JOB_STATUSES = { COMPLETE: "Complete", RETURN_VISIT: "Needs return visit", WAITING_PARTS: "Waiting for parts", NEEDS_QUOTE: "Needs a quote" } as const;
 
 const money = (v: unknown) => (v === "" || v == null ? undefined : Number(String(v).replace(/[$,\s]/g, "")));

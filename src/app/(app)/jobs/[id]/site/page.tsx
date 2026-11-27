@@ -15,7 +15,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
   const [updates, reports, signoffs, project] = await Promise.all([
     prisma.fieldUpdate.findMany({ where: { projectId: id, ...(sp.show === "issues" ? { kind: "ISSUE", resolvedAt: null } : {}) }, include: { author: true }, orderBy: { createdAt: "desc" }, take: 100 }),
     prisma.dailyReport.findMany({ where: { projectId: id }, orderBy: { date: "desc" }, take: 60 }),
-    prisma.workOrderSignoff.findMany({ where: { projectId: id }, orderBy: { createdAt: "desc" } }),
+    prisma.workOrderSignoff.findMany({ where: { projectId: id }, orderBy: { createdAt: "desc" }, include: { notes: { orderBy: { createdAt: "asc" } } } }),
     prisma.project.findUniqueOrThrow({ where: { id } }),
   ]);
   const people = await prisma.user.findMany({ where: { id: { in: [...reports.map((r) => r.createdById), ...signoffs.map((s) => s.completedById), ...updates.map((u) => u.resolvedById)].filter((x): x is string => !!x) } }, select: { id: true, name: true } });
@@ -112,6 +112,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                     <div className="mt-1 text-slate-600">Materials used: {(s.materialsUsed as { item: string; quantity: string }[]).map((m) => `${m.quantity ? `${m.quantity} × ` : ""}${m.item}`).join("; ")}</div>
                   ) : null}
                   {s.parkingAmount != null ? <p className="mt-1 text-slate-600">Parking: ${Number(s.parkingAmount).toFixed(2)}{s.parkingReceiptDocId ? " (receipt below)" : " (no receipt)"}</p> : null}
+                  {s.notes.length ? <ul className="mt-2 space-y-1 border-l-2 border-amber-300 pl-3">{s.notes.map((n) => <li key={n.id} className="text-slate-700"><span className="text-xs text-slate-500">Added {fmtDateTime(n.createdAt)}:</span> <span className="whitespace-pre-line">{n.text}</span></li>)}</ul> : null}
                   {s.signatureDocId || s.parkingReceiptDocId ? <DocList entityType="WorkOrderSignoff" entityId={s.id} /> : null}
                 </li>
               ))}

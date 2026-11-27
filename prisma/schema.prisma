@@ -1440,4 +1440,18 @@ model WorkOrderSignoff {
   signatureDocId String?
   signedAt       DateTime?
   createdAt      DateTime  @default(now())
+
+  notes WorkOrderNote[]
+}
+
+/// Added after a work order is submitted ("forgot to add"). The original is never changed.
+model WorkOrderNote {
+  id        String           @id @default(cuid())
+  signoffId String
+  signoff   WorkOrderSignoff @relation(fields: [signoffId], references: [id], onDelete: Cascade)
+  authorId  String
+  text      String
+  createdAt DateTime         @default(now())
+
+  @@index([signoffId])
 }

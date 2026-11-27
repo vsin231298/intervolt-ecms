@@ -6,10 +6,10 @@ import { useState } from "react";
 import clsx from "clsx";
 import {
   LayoutDashboard, Target, Briefcase, CalendarDays, Users, Clock, ShoppingCart, FileStack, Wallet, FolderOpen,
-  HardHat, Building2, BarChart3, Smartphone, Settings, ShieldCheck, UserCog, Menu, X,
+  HardHat, Building2, BarChart3, Smartphone, ClipboardList, Settings, ShieldCheck, UserCog, Menu, X,
 } from "lucide-react";
 
-const ICONS = { LayoutDashboard, Target, Briefcase, CalendarDays, Users, Clock, ShoppingCart, FileStack, Wallet, FolderOpen, HardHat, Building2, BarChart3, Smartphone, Settings, ShieldCheck, UserCog };
+const ICONS = { LayoutDashboard, Target, Briefcase, CalendarDays, Users, Clock, ShoppingCart, FileStack, Wallet, FolderOpen, HardHat, Building2, BarChart3, Smartphone, ClipboardList, Settings, ShieldCheck, UserCog };
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS; section?: string; badge?: number };
 
 export function Sidebar({ items }: { items: NavItem[] }) {

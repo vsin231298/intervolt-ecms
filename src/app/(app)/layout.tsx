@@ -25,6 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   add(can(r, "time.manage") || can(r, "time.submit"), { href: "/timesheets", label: "Timesheets", icon: "Clock", section: "People & Time" });
   add(can(r, "workers.edit") || can(r, "jobs.view"), { href: "/people", label: "Employees", icon: "HardHat", section: "People & Time" });
   add(can(r, "field.use"), { href: "/field", label: "Field App", icon: "Smartphone", section: "People & Time" });
+  add(can(r, "field.use"), { href: "/my-work-orders", label: "My Work Orders", icon: "ClipboardList", section: "People & Time" });
   add(can(r, "financials.view"), { href: "/finance", label: "Finance", icon: "Wallet", section: "Company" });
   add(can(r, "documents.view") || can(r, "company.documents"), { href: "/documents", label: "Documents", icon: "FolderOpen", section: "Company" });
   add(can(r, "jobs.view"), { href: "/directory", label: "Clients & Suppliers", icon: "Building2", section: "Company" });

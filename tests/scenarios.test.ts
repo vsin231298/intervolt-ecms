@@ -428,6 +428,15 @@ describe("Scenario 4: service work order from the field", () => {
     expect(off.description).toMatch(/typed by worker/);
     expect(await prisma.timeEntry.count({ where: { projectId: bakery.id, source: "TRAVEL" } })).toBe(0);
     await labour.completeWorkOrder(elec, bakery.id, { workSummary: "Replaced outlet", markedComplete: true });
+    // "My work orders": only your own; notes added after, original unchanged
+    const mine = await labour.myWorkOrders(elec);
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.every((m) => m.completedById === elec.id)).toBe(true);
+    await labour.addWorkOrderNote(elec, mine[0].id, "Also replaced the cover plate");
+    const again = await labour.myWorkOrder(elec, mine[0].id);
+    expect(again.workSummary).toBe("Replaced outlet");
+    expect(again.notes.map((n) => n.text)).toEqual(["Also replaced the cover plate"]);
+    await expect(labour.myWorkOrder(pm, mine[0].id)).rejects.toThrow();
     await labour.clockOut(elec, { lat: 43.64, lng: -79.39, toOffice: true });
     expect((await labour.pendingOfficeDropOff(w.id))?.projectId).toBe(bakery.id);
     await prisma.clockEntry.updateMany({ where: { projectId: bakery.id }, data: { clockOutAt: new Date(Date.now() - 25 * 60_000) } });

@@ -78,6 +78,12 @@ export async function doneAtOfficeAction(_p: ActionState, fd: FormData) {
     return `Done. ${Math.floor(r.minutes / 60)}:${String(r.minutes % 60).padStart(2, "0")} added.`;
   });
 }
+export async function workOrderNoteAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    await labour.addWorkOrderNote(actor, str(d.signoffId), str(d.text));
+    return "Note added.";
+  });
+}
 export async function startServiceCallAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
     const p = await labour.startServiceCall(actor, labour.serviceCallSchema.parse(d), geo(d));
@@ -120,7 +126,7 @@ export async function signoffAction(_p: ActionState, fd: FormData) {
     const [receipt] = await filesFrom(fd, "parkingReceipt");
     const input = labour.signoffSchema.parse({ ...d, markedComplete: zBool.parse(d.markedComplete ?? ""), jobStatus: d.jobStatus || undefined, coWorkerIds, materialsUsed });
     await labour.completeWorkOrder(actor, str(d.projectId), input, receipt ?? null);
-    return "Work order saved.";
+    return "Work order saved. See it in My Work Orders.";
   });
 }
 export async function joinServiceCallAction(_p: ActionState, fd: FormData) {

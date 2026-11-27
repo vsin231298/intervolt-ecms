@@ -11,7 +11,7 @@ import { zDate, zId, zNonNeg, zOptId, zOptText, zText } from "@/lib/forms";
 import { notifyUsers } from "@/lib/notify";
 import { getSetting } from "@/lib/settings";
 import { createCloseoutItems, createFolders, loadProject } from "./projects";
-import { nextWorkOrderNumber } from "@/lib/numbering";
+import { nextCounter, nextWorkOrderNumber } from "@/lib/numbering";
 import { notifyRoles } from "@/lib/notify";
 import { distanceMeters, fmtDistance, parseLatLng } from "@/lib/geo";
 import { uploadDocument, type UploadFile } from "./documents";
@@ -203,7 +203,7 @@ export async function updateAssignment(actor: Actor, raw: z.input<typeof editShi
     await t.labourAssignment.update({ where: { id: a.id }, data });
     const changes: string[] = [];
     if (date.getTime() !== a.date.getTime()) changes.push(`moved to ${shortDay(date)}`);
-    if (projectId !== a.projectId) changes.push(`now at ${project.number} ${project.name}`);
+    if (projectId !== a.projectId) changes.push(`now at ${project.name}`);
     if (fmtShift(data) !== fmtShift(a)) changes.push(fmtShift(data));
     if ((data.notes ?? "") !== (a.notes ?? "")) changes.push(data.notes ? `note: ${data.notes}` : "note removed");
     if (a.publishedAt && a.worker.userId && changes.length) {
@@ -222,7 +222,7 @@ export async function removeAssignment(actor: Actor, id: string) {
     await t.labourAssignment.delete({ where: { id } });
     if (a.publishedAt && a.worker.userId) {
       const p = await t.project.findUnique({ where: { id: a.projectId }, select: { number: true, name: true } });
-      await notifyUsers(t, [a.worker.userId], { type: "schedule.changed", title: `Schedule changed: ${shortDay(a.date)}`, body: `Removed from ${p?.number} ${p?.name ?? ""}`.trim(), link: "/field" }, actor.id);
+      await notifyUsers(t, [a.worker.userId], { type: "schedule.changed", title: `Schedule changed: ${shortDay(a.date)}`, body: `Removed from ${p?.name ?? "a job"}`, link: "/field" }, actor.id);
     }
     await audit(t, actor, { action: "schedule.remove", entityType: "LabourAssignment", entityId: id, projectId: a.projectId, summary: `${a.worker.name} removed from schedule on ${a.date.toISOString().slice(0, 10)}`, before: a });
   });
@@ -399,7 +399,7 @@ async function addTravel(t: Tx, actor: Actor, worker: ClockWorker, toProjectId: 
   const left = last.officeDoneAt ?? last.clockOutAt;
   const minutes = Math.round((at.getTime() - left.getTime()) / 60_000);
   if (minutes < 1) return null;
-  const e = await paidExtra(t, actor, worker, toProjectId, at, minutes, "TRAVEL", `Travel ${dur(minutes)} from ${last.officeDoneAt ? "office" : last.project.number} (${hm(left)} to ${hm(at)})`);
+  const e = await paidExtra(t, actor, worker, toProjectId, at, minutes, "TRAVEL", `Travel ${dur(minutes)} from ${last.officeDoneAt ? "office" : last.project.pendingReview ? last.project.name : last.project.number} (${hm(left)} to ${hm(at)})`);
   await audit(t, actor, { action: "time.travel", entityType: "TimeEntry", entityId: e.id, projectId: toProjectId, summary: `${worker.name} travel ${minutes} min ${last.project.number} → ${toNumber}` });
   return e;
 }
@@ -448,7 +448,7 @@ export async function clockIn(actor: Actor, projectId: string, geo: GeoPoint = {
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (open) throw new UserError(`Clock out of ${open.project.number} first.`);
+    if (open) throw new UserError(`Clock out of ${open.project.name} first.`);
     const p = await loadProject(t, projectId);
     const dist = await assertOnSite(t, p, geo, "clock in");
     const c = await t.clockEntry.create({ data: { workerId: worker.id, projectId, clockInAt: new Date(), inLat: geo.lat, inLng: geo.lng } });
@@ -482,14 +482,15 @@ export async function startServiceCall(actor: Actor, input: z.infer<typeof servi
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const open = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (open) throw new UserError(`Clock out of ${open.project.number} first.`);
+    if (open) throw new UserError(`Clock out of ${open.project.name} first.`);
     const base = Number(await getSetting("field.geofenceRadiusMeters", t));
     // Weak GPS at the start would make the pin unreliable; widen this job's range to cover it (max 500 m).
     const radius = geo.accuracy && geo.accuracy > base / 2 ? Math.min(500, Math.ceil(base + geo.accuracy)) : null;
-    const number = await nextWorkOrderNumber(t);
+    // Temporary number: the office files the work order under an existing job or gives it a real WO number.
+    const number = `NEW-${await nextCounter(t, "newcall")}`;
     const p = await t.project.create({
       data: {
-        number, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
+        number, pendingReview: true, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
         name: `Service call: ${input.customer}`.slice(0, 200), location: input.address ?? null, siteContactName: input.customer, siteContactPhone: input.phone,
         scope: input.problem, description: `Started on site by ${worker.name}.`,
         siteLat: geo.lat, siteLng: geo.lng, geofenceRadiusM: radius, serviceLeadUserId: actor.id,
@@ -532,7 +533,7 @@ export async function clockOut(actor: Actor, geo: GeoPoint = {}, notes?: string,
       const other = await t.clockEntry.findFirst({ where: { projectId: open.projectId, clockOutAt: null, worker: { userId: handLeadToUserId } }, include: { worker: true } });
       assert(other, "They're not on this call any more. Fill work order instead.");
       await t.project.update({ where: { id: open.projectId }, data: { serviceLeadUserId: handLeadToUserId } });
-      await notifyUsers(t, [handLeadToUserId], { type: "servicecall.lead", title: `${worker.name} left. You're lead on ${open.project.siteContactName ?? open.project.number}. Fill work order before you clock out.`, link: `/field/${open.projectId}`, projectId: open.projectId }, actor.id);
+      await notifyUsers(t, [handLeadToUserId], { type: "servicecall.lead", title: `${worker.name} left. You're lead on ${open.project.siteContactName ?? open.project.name}. Fill work order before you clock out.`, link: `/field/${open.projectId}`, projectId: open.projectId }, actor.id);
       await audit(t, actor, { action: "servicecall.lead", entityType: "Project", entityId: open.projectId, projectId: open.projectId, summary: `${open.project.number}: ${worker.name} handed lead to ${other.worker.name}` });
     } else if (await needsWorkOrder(t, actor.id, open)) {
       throw new UserError("Fill work order first.");
@@ -568,7 +569,7 @@ export async function takeOverLead(actor: Actor, projectId: string) {
     if (mine.project.serviceLeadUserId === actor.id) return;
     const prev = mine.project.serviceLeadUserId;
     await t.project.update({ where: { id: projectId }, data: { serviceLeadUserId: actor.id } });
-    if (prev) await notifyUsers(t, [prev], { type: "servicecall.lead", title: `${worker.name} took over as lead on ${mine.project.siteContactName ?? mine.project.number}. No work order needed from you.`, link: `/field/${projectId}`, projectId }, actor.id);
+    if (prev) await notifyUsers(t, [prev], { type: "servicecall.lead", title: `${worker.name} took over as lead on ${mine.project.siteContactName ?? mine.project.name}. No work order needed from you.`, link: `/field/${projectId}`, projectId }, actor.id);
     await audit(t, actor, { action: "servicecall.lead", entityType: "Project", entityId: projectId, projectId, summary: `${mine.project.number}: ${worker.name} took over as lead` });
   });
 }
@@ -597,7 +598,7 @@ export async function joinServiceCall(actor: Actor, projectId: string, geo: GeoP
     const worker = await workerForUser(actor.id, t);
     assert(worker && worker.active, "Your account is not linked to a worker profile. Ask the office to link it.");
     const mine = await t.clockEntry.findFirst({ where: { workerId: worker.id, clockOutAt: null }, include: { project: true } });
-    if (mine) throw new UserError(`Clock out of ${mine.project.number} first.`);
+    if (mine) throw new UserError(`Clock out of ${mine.project.name} first.`);
     const p = await loadProject(t, projectId);
     assert(p.jobType === "SERVICE" && p.stage === "EXECUTION", "That call has ended.");
     const lead = await t.clockEntry.findFirst({ where: { projectId, clockOutAt: null }, include: { worker: true } });
@@ -800,7 +801,7 @@ export async function requestWorkOrders(actor: Actor, raw: z.input<typeof workOr
       const dup = await t.workOrderRequest.findFirst({ where: { userId, projectId: p.id, date: input.date, doneAt: null, cancelledAt: null } });
       if (dup) { skipped.push(w.name); continue; }
       const r = await t.workOrderRequest.create({ data: { userId, projectId: p.id, date: input.date, note: input.note ?? null, requestedById: actor.id } });
-      await notifyUsers(t, [userId], { type: "workorder.request", title: `Work order needed: ${p.number} ${p.name}`, body: `Office asked for your work order for ${shortDay(input.date)}.${input.note ? ` ${input.note}` : ""}`, link: `/field/request/${r.id}`, projectId: p.id }, actor.id);
+      await notifyUsers(t, [userId], { type: "workorder.request", title: `Work order needed: ${p.name}`, body: `Office asked for your work order for ${shortDay(input.date)}.${input.note ? ` ${input.note}` : ""}`, link: `/field/request/${r.id}`, projectId: p.id }, actor.id);
       await audit(t, actor, { action: "workorder.request", entityType: "WorkOrderRequest", entityId: r.id, projectId: p.id, summary: `Asked ${w.name} for the ${p.number} work order for ${shortDay(input.date)}` });
       created++;
     }
@@ -816,7 +817,7 @@ export async function cancelWorkOrderRequest(actor: Actor, id: string) {
     assert(!r.doneAt, "Already done.");
     if (r.cancelledAt) return;
     await t.workOrderRequest.update({ where: { id }, data: { cancelledAt: new Date() } });
-    await notifyUsers(t, [r.userId], { type: "workorder.request", title: `No longer needed: ${r.project.number} work order (${shortDay(r.date)})`, link: "/field", projectId: r.projectId }, actor.id);
+    await notifyUsers(t, [r.userId], { type: "workorder.request", title: `No longer needed: ${r.project.name} work order (${shortDay(r.date)})`, link: "/field", projectId: r.projectId }, actor.id);
     await audit(t, actor, { action: "workorder.request.cancel", entityType: "WorkOrderRequest", entityId: id, projectId: r.projectId, summary: `Cancelled work order request for ${shortDay(r.date)}` });
   });
 }
@@ -883,7 +884,9 @@ export const signoffSchema = z.object({
 });
 
 /** Complete work order (optional) + customer signature (optional). */
-export async function completeWorkOrder(actor: Actor, projectId: string, input: z.infer<typeof signoffSchema>, parkingReceipt?: UploadFile | null) {
+export async function completeWorkOrder(actor: Actor, projectId: string, input: z.infer<typeof signoffSchema>, parkingReceipt?: UploadFile | null, photos: UploadFile[] = []) {
+  assert(photos.length <= 15, "Up to 15 photos.");
+  for (const ph of photos) assert(/^image\//.test(ph.type) || /\.(jpe?g|png|heic|webp)$/i.test(ph.name), "Site photos must be pictures.");
   if (input.jobStatus) input = { ...input, markedComplete: input.jobStatus === "COMPLETE" };
   if (parkingReceipt) assert(/^image\//.test(parkingReceipt.type) || /\.(jpe?g|png|heic|webp|pdf)$/i.test(parkingReceipt.name), "The parking receipt must be a photo or PDF.");
   requireAny(actor, ["field.use", "project.manage"]);
@@ -903,11 +906,15 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
     if (input.requestId) assert(req && req.userId === actor.id && req.projectId === projectId && !req.doneAt && !req.cancelledAt, "That request is already done or was cancelled.");
     const s = await t.workOrderSignoff.create({ data: { projectId, completedById: actor.id, forDate: req?.date ?? null, workSummary: input.workSummary, markedComplete: input.markedComplete, jobStatus: input.jobStatus ?? (input.markedComplete ? "COMPLETE" : null), coWorkerIds: input.coWorkerIds ?? [], materialsUsed: input.materialsUsed?.length ? input.materialsUsed : undefined, parkingAmount: input.parkingAmount, customerName: input.customerName, signedAt: sigFile ? new Date() : null } });
     if (parkingReceipt) {
-      const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Parking receipt", title: `${p.number} parking receipt${input.parkingAmount != null ? ` $${input.parkingAmount.toFixed(2)}` : ""}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, parkingReceipt, t);
+      const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Parking receipt", title: `${p.pendingReview ? p.name : p.number} parking receipt${input.parkingAmount != null ? ` $${input.parkingAmount.toFixed(2)}` : ""}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, parkingReceipt, t);
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { parkingReceiptDocId: up.documentId } });
     }
+    const ref = p.pendingReview ? p.name : p.number;
+    for (const [i, ph] of photos.entries()) {
+      await uploadDocument(actor, { projectId, module: "FIELD", category: "Site photo", title: `${ref} site photo ${i + 1}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, ph, t);
+    }
     if (sigFile) {
-      const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Customer signature", title: `${p.number} customer sign-off — ${input.customerName}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, sigFile, t);
+      const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Customer signature", title: `${p.pendingReview ? p.name : p.number} customer sign-off — ${input.customerName}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, sigFile, t);
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { signatureDocId: up.documentId } });
     }
     await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.jobStatus ? JOB_STATUSES[input.jobStatus].toLowerCase() : input.markedComplete ? "completed" : "visit recorded"}${input.parkingAmount ? `, parking $${input.parkingAmount.toFixed(2)}` : ""}${sigFile ? `, signed by ${input.customerName}` : ""}` });

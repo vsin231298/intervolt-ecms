@@ -34,9 +34,10 @@ export function WorkOrderForm({ projectId, coWorkers, crewIds, suggestions, requ
           {Object.entries(JOB_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
       </Field>
+      <Field label="Site photos"><input type="file" name="sitePhotos" accept="image/*" multiple className="block w-full text-sm" /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Parking $"><input name="parkingAmount" inputMode="decimal" placeholder="0.00" className="input" /></Field>
-        <Field label="Receipt"><input type="file" name="parkingReceipt" accept="image/*,application/pdf" capture="environment" className="block w-full text-xs" /></Field>
+        <Field label="Parking ticket / receipt"><input type="file" name="parkingReceipt" accept="image/*,application/pdf" capture="environment" className="block w-full text-xs" /></Field>
       </div>
       <Field label="Customer name"><input name="customerName" className="input" /></Field>
       <SignaturePad name="signatureDataUrl" />

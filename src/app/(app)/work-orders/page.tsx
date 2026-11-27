@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, parseDate } from "@/lib/dates";
-import { Badge, Card, Drawer, Empty, Field, PageHeader } from "@/components/ui";
+import { Badge, Card, Drawer, Empty, Field, PageHeader, Tabs } from "@/components/ui";
+import { BillingList, ReviewQueue } from "@/components/WorkOrderReview";
+import { billingList, reviewQueue } from "@/services/workorders";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { can } from "@/lib/rbac";
 import { isoDate, today } from "@/lib/dates";
@@ -11,7 +13,7 @@ import { StatusBadge } from "@/components/WorkOrderView";
 import { JOB_STATUSES, allWorkOrders, officeWorkOrderRequests } from "@/services/labour";
 
 /** Office: every work order the guys have submitted. */
-export default async function WorkOrders({ searchParams }: { searchParams: Promise<{ who?: string; status?: string; from?: string; to?: string; q?: string }> }) {
+export default async function WorkOrders({ searchParams }: { searchParams: Promise<{ tab?: string; who?: string; status?: string; from?: string; to?: string; q?: string }> }) {
   const user = await requireUser("jobs.view");
   const sp = await searchParams;
   const [list, people] = await Promise.all([
@@ -26,6 +28,9 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
     canAsk ? prisma.project.findMany({ where: { stage: { in: ["ACTIVATION", "EXECUTION", "CLOSEOUT", "CLOSED"] } }, orderBy: { number: "desc" }, take: 300, select: { id: true, number: true, name: true } }) : [],
   ]);
   const openReq = requests.filter((r) => !r.doneAt);
+  const queue = await reviewQueue(user);
+  const tab = sp.tab === "review" || sp.tab === "bill" || sp.tab === "all" ? sp.tab : filtered ? "all" : queue.length ? "review" : "all";
+  const bill = tab === "bill" ? await billingList(user) : [];
   const day = (d: Date) => d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
   return (
     <div className="space-y-4">
@@ -42,6 +47,14 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
           </ActionForm>
         </Drawer>
       ) : undefined} />
+      <Tabs current={tab} items={[
+        { key: "review", label: "Needs review", href: "/work-orders?tab=review", count: queue.length },
+        { key: "all", label: "All work orders", href: "/work-orders?tab=all" },
+        { key: "bill", label: "To bill", href: "/work-orders?tab=bill" },
+      ]} />
+      {tab === "review" ? <ReviewQueue items={queue} canFile={can(user.role, "jobs.create")} /> : null}
+      {tab === "bill" ? <BillingList rows={bill} canBill={can(user.role, "billing.prepare")} /> : null}
+      {tab === "all" ? <>
       {requests.length ? (
         <Card title={`Requested${openReq.length ? ` · ${openReq.length} waiting` : ""}`} bodyClass="p-0">
           <ul className="divide-y divide-slate-100 text-sm">{requests.map((r) => (
@@ -60,12 +73,13 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
         </Card>
       ) : null}
       <form className="card grid gap-2 p-3 sm:grid-cols-6">
+        <input type="hidden" name="tab" value="all" />
         <input name="q" defaultValue={sp.q} placeholder="Search job, customer, address, work…" className="input sm:col-span-2" />
         <select name="who" defaultValue={sp.who ?? ""} className="input"><option value="">Everyone</option>{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <select name="status" defaultValue={sp.status ?? ""} className="input"><option value="">Any status</option>{Object.entries(JOB_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
         <input type="date" name="from" defaultValue={sp.from} className="input" aria-label="From" />
         <input type="date" name="to" defaultValue={sp.to} className="input" aria-label="To" />
-        <div className="flex gap-2 sm:col-span-6"><button className="btn btn-secondary btn-sm">Filter</button>{filtered ? <Link href="/work-orders" className="btn btn-ghost btn-sm">Clear</Link> : null}</div>
+        <div className="flex gap-2 sm:col-span-6"><button className="btn btn-secondary btn-sm">Filter</button>{filtered ? <Link href="/work-orders?tab=all" className="btn btn-ghost btn-sm">Clear</Link> : null}</div>
       </form>
       <Card bodyClass="overflow-x-auto p-0">
         {list.length === 0 ? <div className="p-4"><Empty>{filtered ? "Nothing matches." : "No work orders submitted yet."}</Empty></div> : (
@@ -85,6 +99,7 @@ export default async function WorkOrders({ searchParams }: { searchParams: Promi
           </table>
         )}
       </Card>
+      </> : null}
     </div>
   );
 }

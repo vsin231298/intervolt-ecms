@@ -41,6 +41,8 @@ enum CloseReason {
   LOST_BID
   COMPLETED
   CANCELLED
+  /// a phone service call the office filed under another job
+  MERGED
 }
 
 enum OrgType {
@@ -412,6 +414,13 @@ model Project {
   fieldUpdates      FieldUpdate[]
   signoffs          WorkOrderSignoff[]
   workOrderRequests WorkOrderRequest[]
+  /// Service call started on a phone: temporary NEW-n number until the office files its work order
+  pendingReview     Boolean             @default(false)
+  /// Office ticked Billed: drops out of the "Existing job" list
+  billedAt          DateTime?
+  billedById        String?
+  /// Set when this call was merged into another job
+  mergedIntoId      String?
 
   @@index([stage])
   @@index([submissionDeadline])
@@ -1525,6 +1534,9 @@ model WorkOrderSignoff {
   signedAt            DateTime?
   /// The day the work was done, when the office asked for it afterwards
   forDate             DateTime? @db.Date
+  /// Office filed it (kept on this job, moved, or made a new work order)
+  reviewedAt          DateTime?
+  reviewedById        String?
   createdAt           DateTime  @default(now())
 
   notes    WorkOrderNote[]

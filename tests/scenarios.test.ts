@@ -414,7 +414,7 @@ describe("Scenario 4: service work order from the field", () => {
     const travel = await prisma.timeEntry.findFirstOrThrow({ where: { projectId: call2.id, source: "TRAVEL" } });
     expect(Number(travel.regularHours)).toBe(0.67);
     expect(Number(travel.overtimeHours)).toBe(0);
-    expect(travel.description).toMatch(/^Travel 0:40 from WO-/);
+    expect(travel.description).toMatch(/^Travel 0:40 from Service call: /);
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": false });
     await labour.clockOut(elec, { lat: 43.65, lng: -79.39 });
     await admin.saveSettings(adminU, { "field.requireWorkOrderBeforeClockOut": true });

@@ -34,7 +34,7 @@ export default async function FieldHome() {
       {!worker ? <Notice tone="amber">Login not linked to an employee. Call office.</Notice> : null}
       {open ? (
         <div className="card space-y-3 border-emerald-300 p-4">
-          <div className="text-sm">Clocked in on <Link className="link font-semibold" href={`/field/${open.projectId}`}>{open.project.number} {open.project.name}</Link> since {fmtDateTime(open.clockInAt)}</div>
+          <div className="text-sm">Clocked in on <Link className="link font-semibold" href={`/field/${open.projectId}`}>{open.project.name}</Link> since {fmtDateTime(open.clockInAt)}</div>
           {woMissing
             ? <Link href={`/field/${open.projectId}#clock`} className="btn w-full bg-amber-500 py-4 text-lg text-white hover:bg-amber-600">Fill work order</Link>
             : <ClockForm action={clockOutAction} label="Clock out" tone="out" />}
@@ -55,7 +55,7 @@ export default async function FieldHome() {
           <ul className="space-y-2">{requests.map((r) => (
             <li key={r.id}>
               <Link href={`/field/request/${r.id}`} className="flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 hover:bg-amber-100">
-                <span className="min-w-0"><span className="block truncate text-sm font-medium">{r.project.number} {r.project.name}</span><span className="text-xs text-slate-600">{r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}{r.note ? ` · ${r.note}` : ""}</span></span>
+                <span className="min-w-0"><span className="block truncate text-sm font-medium">{r.project.name}</span><span className="text-xs text-slate-600">{r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}{r.note ? ` · ${r.note}` : ""}</span></span>
                 <span className="btn btn-sm shrink-0 bg-amber-500 text-white">Fill</span>
               </Link>
             </li>
@@ -129,7 +129,7 @@ function JobCard({ j }: { j: Awaited<ReturnType<typeof assignedJobs>>["jobs"][nu
     <li>
       <Link href={`/field/${p.id}`} className="card flex items-center gap-3 p-4 hover:border-brand-300">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2"><span className="font-mono text-xs text-slate-500">{p.number}</span><Badge>{JOB_TYPE_LABELS[p.jobType]}</Badge></div>
+          <div className="flex items-center gap-2"><Badge>{JOB_TYPE_LABELS[p.jobType]}</Badge></div>
           <div className="font-semibold">{p.name}</div>
           {p.location ? <div className="flex items-center gap-1 text-sm text-slate-600"><MapPin className="h-3.5 w-3.5" />{p.location}</div> : null}
           {j.hours ? <div className="text-xs text-slate-500">{j.startTime ? `${t12(j.startTime)} – ${t12(j.endTime!)} · ` : ""}{j.hours} h{j.notes ? ` · ${j.notes}` : ""}</div> : null}

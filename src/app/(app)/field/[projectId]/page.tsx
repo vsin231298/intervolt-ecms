@@ -67,7 +67,6 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
     <div className="mx-auto max-w-lg space-y-4 pb-10">
       <div>
         <Link href="/field" className="link text-sm">← My jobs</Link>
-        <div className="mt-1 font-mono text-xs text-slate-500">{p.number}</div>
         <h1 className="text-xl font-semibold">{p.name}</h1>
         {p.client ? <div className="text-sm text-slate-600">{p.client.name}</div> : null}
       </div>
@@ -106,7 +105,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
             </>
           )
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
-          : open ? <Notice tone="amber">Clock out of {open.project.number} first. <Link className="link" href={`/field/${open.projectId}`}>Go there</Link></Notice>
+          : open ? <Notice tone="amber">Clock out of {open.project.name} first. <Link className="link" href={`/field/${open.projectId}`}>Go there</Link></Notice>
           : !access.today && access.next ? <div><div className="mb-2 text-sm text-slate-500">Scheduled {access.next.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}</div><div className="btn w-full cursor-default bg-slate-200 py-4 text-lg text-slate-500">Clock in opens {access.next.toLocaleDateString("en-CA", { weekday: "short", timeZone: "UTC" })}</div></div>
           : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" officeFirst={firstToday} />}
         {worker && geofenceOn ? (

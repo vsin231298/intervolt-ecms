@@ -3,6 +3,7 @@ import { fmtDateTime } from "@/lib/dates";
 import { Badge, Card } from "@/components/ui";
 import { DocList } from "@/components/DocList";
 import { JOB_STATUSES } from "@/services/labour";
+import { documentsFor } from "@/services/documents";
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="py-2"><div className="text-xs text-slate-500">{label}</div><div className="text-sm">{children}</div></div>;
@@ -22,6 +23,8 @@ type Signoff = {
 export async function WorkOrderView({ s, submittedBy, footer, notesFooter }: { s: Signoff; submittedBy?: string; footer?: React.ReactNode; notesFooter?: React.ReactNode }) {
   const coWorkers = s.coWorkerIds.length ? await prisma.worker.findMany({ where: { id: { in: s.coWorkerIds } }, select: { name: true } }) : [];
   const materials = Array.isArray(s.materialsUsed) ? (s.materialsUsed as { item: string; quantity: string }[]) : [];
+  const docs = await documentsFor("WorkOrderSignoff", s.id);
+  const photos = docs.filter((d) => d.category === "Site photo" && d.versions[0]?.mimeType.startsWith("image/"));
   return (
     <>
       <Card title="Submitted">
@@ -34,7 +37,14 @@ export async function WorkOrderView({ s, submittedBy, footer, notesFooter }: { s
           <Row label="Parking">{s.parkingAmount != null ? `$${Number(s.parkingAmount).toFixed(2)}${s.parkingReceiptDocId ? " (receipt)" : ""}` : "None"}</Row>
           <Row label="Customer">{s.customerName ?? "—"}{s.signedAt ? " · signed" : ""}</Row>
         </div>
-        {s.signatureDocId || s.parkingReceiptDocId ? <div className="mt-2"><DocList entityType="WorkOrderSignoff" entityId={s.id} /></div> : null}
+        {photos.length ? (
+          <div className="mt-3"><div className="mb-1 text-xs text-slate-500">Site photos</div>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">{photos.map((d) => (
+              <a key={d.id} href={`/api/files/${d.versions[0].id}?inline=1`} target="_blank" rel="noreferrer"><img src={`/api/files/${d.versions[0].id}?inline=1`} alt={d.title} className="aspect-square w-full rounded-md border border-slate-200 object-cover" /></a>
+            ))}</div>
+          </div>
+        ) : null}
+        {docs.length ? <div className="mt-3"><div className="mb-1 text-xs text-slate-500">Files</div><DocList entityType="WorkOrderSignoff" entityId={s.id} /></div> : null}
         {footer}
       </Card>
       {s.notes.length || notesFooter ? (

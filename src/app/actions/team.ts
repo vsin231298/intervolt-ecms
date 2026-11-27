@@ -6,6 +6,8 @@ import { parseDate } from "@/lib/dates";
 import { UserError } from "@/lib/errors";
 import * as labour from "@/services/labour";
 import * as team from "@/services/team";
+import * as workorders from "@/services/workorders";
+import { prisma } from "@/lib/db";
 
 const arr = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : []);
 
@@ -99,4 +101,22 @@ export async function requestWorkOrderAction(_p: ActionState, fd: FormData) {
 }
 export async function cancelWorkOrderRequestAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => { await labour.cancelWorkOrderRequest(actor, str(d.id)); return "Request cancelled."; });
+}
+
+/** Office: file a work order under a job, or make it a new work order. */
+export async function fileWorkOrderAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const target = str(d.target) === "OTHER" ? str(d.otherId) : str(d.target);
+    if (!target) throw new UserError("Pick a job.");
+    const r = await workorders.fileWorkOrder(actor, str(d.signoffId), target);
+    const p = await prisma.project.findUnique({ where: { id: r.projectId }, select: { number: true } });
+    return `Filed under ${p?.number}.`;
+  });
+}
+export async function setBilledAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const billed = str(d.billed) === "1";
+    await workorders.setBilled(actor, str(d.projectId), billed);
+    return billed ? "Marked billed." : "Billed tick removed.";
+  });
 }

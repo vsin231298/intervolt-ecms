@@ -18,7 +18,7 @@ export default async function MyWorkOrder({ params }: { params: Promise<{ id: st
     <div className="mx-auto max-w-lg space-y-4">
       <Link href="/my-work-orders" className="flex items-center gap-1 text-sm text-slate-600"><ChevronLeft className="h-4 w-4" /> My Work Orders</Link>
       <div>
-        <div className="text-xs text-slate-500"><span className="font-mono">{s.project.number}</span> · {fmtDateTime(s.createdAt)}</div>
+        <div className="text-xs text-slate-500">{fmtDateTime(s.createdAt)}</div>
         <h1 className="text-xl font-semibold">{s.project.name}</h1>
         {s.project.location ? <p className="text-sm text-slate-500">{s.project.location}</p> : null}
       </div>

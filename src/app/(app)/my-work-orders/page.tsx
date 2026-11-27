@@ -18,7 +18,7 @@ export default async function MyWorkOrders() {
       {requests.length ? (
         <ul className="space-y-2">{requests.map((r) => (
           <li key={r.id}><Link href={`/field/request/${r.id}`} className="card flex items-center gap-3 border-amber-300 bg-amber-50 p-4">
-            <div className="min-w-0 flex-1"><div className="text-xs font-semibold text-amber-800">Office needs this · {r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}</div><div className="truncate font-semibold">{r.project.number} {r.project.name}</div></div>
+            <div className="min-w-0 flex-1"><div className="text-xs font-semibold text-amber-800">Office needs this · {r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}</div><div className="truncate font-semibold">{r.project.name}</div></div>
             <ChevronRight className="h-5 w-5 text-amber-600" />
           </Link></li>
         ))}</ul>
@@ -28,7 +28,7 @@ export default async function MyWorkOrders() {
           <li key={s.id}>
             <Link href={`/my-work-orders/${s.id}`} className="card flex items-center gap-3 p-4 hover:bg-slate-50">
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500"><span className="font-mono">{s.project.number}</span> · {fmtDateTime(s.createdAt)}</div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">{fmtDateTime(s.createdAt)}</div>
                 <div className="truncate font-semibold">{s.project.name}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {s.jobStatus && s.jobStatus in JOB_STATUSES ? <Badge tone={s.jobStatus === "COMPLETE" ? "green" : "amber"}>{JOB_STATUSES[s.jobStatus as keyof typeof JOB_STATUSES]}</Badge> : null}

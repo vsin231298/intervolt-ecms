@@ -22,6 +22,7 @@ export const CLOSE_REASON_LABELS: Record<CloseReason, string> = {
   LOST_BID: "Lost bid",
   COMPLETED: "Completed",
   CANCELLED: "Cancelled",
+  MERGED: "Merged into another job",
 };
 
 export const JOB_TYPE_LABELS: Record<JobType, string> = {

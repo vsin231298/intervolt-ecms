@@ -30,7 +30,6 @@ export default async function RequestedWorkOrder({ params }: { params: Promise<{
     <div className="mx-auto max-w-lg space-y-4">
       <Link href="/field" className="flex items-center gap-1 text-sm text-slate-600"><ChevronLeft className="h-4 w-4" /> Field App</Link>
       <div>
-        <div className="text-xs text-slate-500"><span className="font-mono">{r.project.number}</span></div>
         <h1 className="text-xl font-semibold">{r.project.name}</h1>
         {r.project.location ? <p className="text-sm text-slate-500">{r.project.location}</p> : null}
       </div>

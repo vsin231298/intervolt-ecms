@@ -12,8 +12,6 @@ export function WorkerForm({ worker, users }: { worker?: W; users: { value: stri
       <Field label="Trade / position *"><input name="trade" required defaultValue={worker?.trade} list="trades" className="input" /><datalist id="trades"><option value="Journeyperson 309A" /><option value="Apprentice" /><option value="Lead Hand" /><option value="Foreman" /><option value="Service Technician" /></datalist></Field>
       <Field label="Licence / C of Q #"><input name="licenceNo" defaultValue={worker?.licenceNo ?? ""} className="input" /></Field>
       <Field label="Phone"><input name="phone" defaultValue={worker?.phone ?? ""} className="input" /></Field>
-      <Field label="Regular rate ($/h) *"><input name="regularRate" required defaultValue={worker?.regularRate.toString()} className="input" /></Field>
-      <Field label="Overtime rate ($/h) *"><input name="overtimeRate" required defaultValue={worker?.overtimeRate.toString()} className="input" /></Field>
       <Field label="Field app login" className="sm:col-span-2" hint="Link a user account (role Electrician or Site Supervisor) so this person can clock in from the field app."><select name="userId" defaultValue={worker?.userId ?? ""} className="input"><Options items={users} empty="None" /></select></Field>
       {worker ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={worker.active} /> Active</label> : null}
       <div className="sm:col-span-2"><Submit>{worker ? "Save" : "Add employee"}</Submit></div>

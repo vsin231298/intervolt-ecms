@@ -3,7 +3,6 @@ import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { today } from "@/lib/dates";
-import { money } from "@/lib/money";
 import { Badge, Drawer, Empty, PageHeader } from "@/components/ui";
 import { WorkerForm } from "@/components/WorkerForm";
 
@@ -20,7 +19,6 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
     }),
     prisma.user.findMany({ where: { active: true, worker: null }, orderBy: { name: "asc" } }),
   ]);
-  const showRates = can(user.role, "financials.view") || can(user.role, "workers.edit");
   return (
     <div className="space-y-6">
       <PageHeader title="Employees" subtitle="Profiles, certifications and documents" actions={can(user.role, "workers.edit") ? (
@@ -50,7 +48,6 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
                   {expired ? <Badge tone="red">{expired} expired cert(s)</Badge> : null}
                   {expiring ? <Badge tone="amber">{expiring} expiring soon</Badge> : null}
                 </div>
-                {showRates ? <div className="mt-2 text-xs text-slate-500">{money(w.regularRate)}/h · OT {money(w.overtimeRate)}/h</div> : null}
               </Link>
             );
           })}

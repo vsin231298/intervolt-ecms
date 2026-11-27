@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/db";
 import { addDays, fmtDate, isoDate, today } from "@/lib/dates";
-import { money, qty, sum } from "@/lib/money";
+import { qty, sum } from "@/lib/money";
 import { Card, DL, Drawer, Empty, Field, PageHeader, StatusBadge, clsx } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { WorkerForm } from "@/components/WorkerForm";
@@ -30,7 +30,6 @@ export default async function WorkerPage({ params }: { params: Promise<{ id: str
   const r = user.role;
   const canEdit = can(r, "workers.edit");
   const canDocs = can(r, "company.documents") && can(r, "documents.upload");
-  const showRates = can(r, "financials.view") || canEdit;
   const users = canEdit ? await prisma.user.findMany({ where: { active: true, OR: [{ worker: null }, { id: w.userId ?? "" }] }, orderBy: { name: "asc" } }) : [];
 
   return (
@@ -43,7 +42,6 @@ export default async function WorkerPage({ params }: { params: Promise<{ id: str
           ["Licence / C of Q", w.licenceNo ?? "—"],
           ["Phone", w.phone ? <a key="p" className="link" href={`tel:${w.phone}`}>{w.phone}</a> : "—"],
           ["Field app login", w.user ? `${w.user.email} (${w.user.role.replace(/_/g, " ").toLowerCase()})` : "None"],
-          ["Rates", showRates ? `${money(w.regularRate)}/h · OT ${money(w.overtimeRate)}/h` : "—"],
         ]} />
       </Card>
 

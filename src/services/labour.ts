@@ -23,8 +23,9 @@ export const workerSchema = z.object({
   trade: zText(100),
   licenceNo: zOptText(100),
   phone: zOptText(50),
-  regularRate: zNonNeg,
-  overtimeRate: zNonNeg,
+  // Rates are no longer on the form; kept for old data and job costing.
+  regularRate: zNonNeg.optional(),
+  overtimeRate: zNonNeg.optional(),
   userId: zOptId,
   active: z.boolean().default(true),
 });
@@ -37,7 +38,7 @@ export async function saveWorker(actor: Actor, id: string | null, input: z.infer
       assert(!other, "That user account is already linked to another worker.");
     }
     const before = id ? await t.worker.findUnique({ where: { id } }) : null;
-    const w = id ? await t.worker.update({ where: { id }, data: { ...input, userId: input.userId ?? null } }) : await t.worker.create({ data: input });
+    const w = id ? await t.worker.update({ where: { id }, data: { ...input, userId: input.userId ?? null } }) : await t.worker.create({ data: { ...input, regularRate: input.regularRate ?? 0, overtimeRate: input.overtimeRate ?? 0 } });
     await audit(t, actor, { action: id ? "worker.update" : "worker.create", entityType: "Worker", entityId: w.id, summary: `Worker ${w.name} ${id ? "updated" : "added"}`, before, after: input });
     return w;
   });

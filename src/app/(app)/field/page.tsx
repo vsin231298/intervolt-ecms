@@ -7,7 +7,7 @@ import { JOB_TYPE_LABELS } from "@/lib/workflow";
 import { Badge, Empty, Notice, clsx } from "@/components/ui";
 import { ClockForm } from "@/components/FieldClient";
 import { ServiceCall } from "@/components/ServiceCall";
-import { assignedJobs, myWeek, firstClockInToday, joinableServiceCalls, needsWorkOrder, pendingOfficeDropOff } from "@/services/labour";
+import { assignedJobs, myWeek, myWorkOrderRequests, firstClockInToday, joinableServiceCalls, needsWorkOrder, pendingOfficeDropOff } from "@/services/labour";
 import { clockOutAction, doneAtOfficeAction, joinServiceCallAction, startServiceCallAction } from "@/app/actions/labour";
 import { getSetting } from "@/lib/settings";
 
@@ -22,6 +22,7 @@ export default async function FieldHome() {
   const crewChoices = worker && !open && allowServiceCalls ? await prisma.worker.findMany({ where: { active: true, id: { not: worker.id } }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
   const firstToday = worker && !open ? await firstClockInToday(worker.id) : false;
   const dropOff = worker && !open ? await pendingOfficeDropOff(worker.id) : null;
+  const requests = await myWorkOrderRequests(user.id);
   const todays = jobs.filter((j) => j.today);
   const others = jobs.filter((j) => !j.today);
   return (
@@ -47,6 +48,19 @@ export default async function FieldHome() {
           <ClockForm action={doneAtOfficeAction} label="Done at office" tone="out" notes={false} office={false} />
           <p className="flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" /> Must be at office.</p>
         </div>
+      ) : null}
+      {requests.length ? (
+        <section className="card border-amber-300 p-4">
+          <h2 className="mb-2 font-semibold text-amber-900">Work order needed</h2>
+          <ul className="space-y-2">{requests.map((r) => (
+            <li key={r.id}>
+              <Link href={`/field/request/${r.id}`} className="flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 hover:bg-amber-100">
+                <span className="min-w-0"><span className="block truncate text-sm font-medium">{r.project.number} {r.project.name}</span><span className="text-xs text-slate-600">{r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}{r.note ? ` · ${r.note}` : ""}</span></span>
+                <span className="btn btn-sm shrink-0 bg-amber-500 text-white">Fill</span>
+              </Link>
+            </li>
+          ))}</ul>
+        </section>
       ) : null}
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Today&apos;s jobs</h2>

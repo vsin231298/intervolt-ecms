@@ -88,3 +88,15 @@ export async function sendMessageAction(_p: ActionState, fd: FormData) {
     return "Sent.";
   });
 }
+
+/** Office: ask guys for a work order they missed. */
+export async function requestWorkOrderAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => {
+    const r = await labour.requestWorkOrders(actor, { userIds: arr(d["userIds[]"] ?? d.userIds), projectId: str(d.projectId), date: str(d.date), note: str(d.note) || undefined });
+    const skip = r.skipped.length ? ` Already asked: ${r.skipped.join(", ")}.` : "";
+    return r.created ? `Requested from ${r.created} ${r.created === 1 ? "person" : "people"}.${skip}` : `Nothing sent.${skip}`;
+  });
+}
+export async function cancelWorkOrderRequestAction(_p: ActionState, fd: FormData) {
+  return run(fd, async (actor, d) => { await labour.cancelWorkOrderRequest(actor, str(d.id)); return "Request cancelled."; });
+}

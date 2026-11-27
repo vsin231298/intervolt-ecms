@@ -127,6 +127,7 @@ export async function signoffAction(_p: ActionState, fd: FormData) {
     const [receipt] = await filesFrom(fd, "parkingReceipt");
     const input = labour.signoffSchema.parse({ ...d, markedComplete: zBool.parse(d.markedComplete ?? ""), jobStatus: d.jobStatus || undefined, coWorkerIds, materialsUsed });
     await labour.completeWorkOrder(actor, str(d.projectId), input, receipt ?? null);
+    if (input.requestId) return { message: "Work order sent to the office.", redirectTo: "/my-work-orders" };
     return "Work order saved. See it in My Work Orders.";
   });
 }

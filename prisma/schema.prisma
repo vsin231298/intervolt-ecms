@@ -411,6 +411,7 @@ model Project {
   clockEntries      ClockEntry[]
   fieldUpdates      FieldUpdate[]
   signoffs          WorkOrderSignoff[]
+  workOrderRequests WorkOrderRequest[]
 
   @@index([stage])
   @@index([submissionDeadline])
@@ -1522,9 +1523,32 @@ model WorkOrderSignoff {
   customerName        String?
   signatureDocId      String?
   signedAt            DateTime?
+  /// The day the work was done, when the office asked for it afterwards
+  forDate             DateTime? @db.Date
   createdAt           DateTime  @default(now())
 
-  notes WorkOrderNote[]
+  notes    WorkOrderNote[]
+  requests WorkOrderRequest[]
+}
+
+/// Office asks a worker for a work order they missed (job + day).
+model WorkOrderRequest {
+  id            String            @id @default(cuid())
+  projectId     String
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// the worker's login
+  userId        String
+  date          DateTime          @db.Date
+  note          String?
+  requestedById String
+  createdAt     DateTime          @default(now())
+  signoffId     String?
+  signoff       WorkOrderSignoff? @relation(fields: [signoffId], references: [id], onDelete: SetNull)
+  doneAt        DateTime?
+  cancelledAt   DateTime?
+
+  @@index([userId, doneAt])
+  @@index([projectId])
 }
 
 /// Added after a work order is submitted ("forgot to add"). The original is never changed.

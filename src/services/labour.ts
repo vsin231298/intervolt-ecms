@@ -323,6 +323,7 @@ export async function fieldViewAccess(actor: Actor, projectId: string): Promise<
   if (can(actor.role, "jobs.view")) return { today: true, next: null };
   const { jobs, worker } = await assignedJobs(actor);
   if (jobs.some((j) => j.project.id === projectId)) return { today: true, next: null };
+  if (await prisma.workOrderRequest.count({ where: { userId: actor.id, projectId, doneAt: null, cancelledAt: null } })) return { today: false, next: null };
   const t0 = today();
   const next = worker ? await prisma.labourAssignment.findFirst({ where: { workerId: worker.id, projectId, publishedAt: { not: null }, date: { gt: t0, lte: addDays(t0, 14) } }, orderBy: { date: "asc" } }) : null;
   if (!next) throw new ForbiddenError("You are not assigned to this job.");
@@ -331,6 +332,7 @@ export async function fieldViewAccess(actor: Actor, projectId: string): Promise<
 
 export async function assertFieldAccess(actor: Actor, projectId: string) {
   if (can(actor.role, "jobs.view")) return;
+  if (await prisma.workOrderRequest.count({ where: { userId: actor.id, projectId, doneAt: null, cancelledAt: null } })) return;
   const { jobs } = await assignedJobs(actor);
   if (!jobs.some((j) => j.project.id === projectId)) throw new ForbiddenError("You are not assigned to this job.");
 }
@@ -774,6 +776,78 @@ export async function workOrderForOffice(actor: Actor, id: string) {
   return { ...s, submittedBy: u?.name ?? "Unknown" };
 }
 
+// ─────────────── Work order requests (office asks for a missed one) ───────────────
+
+export const workOrderRequestSchema = z.object({
+  userIds: z.array(zId).min(1, "Pick at least one person").max(50),
+  projectId: zId,
+  date: zDate,
+  note: zOptText(500),
+});
+
+/** Office asks one or more guys for the work order for a job on a day. Each gets an alert. */
+export async function requestWorkOrders(actor: Actor, raw: z.input<typeof workOrderRequestSchema>) {
+  const input = workOrderRequestSchema.parse(raw);
+  requirePerm(actor, "labour.schedule");
+  assert(input.date <= today(), "Pick today or an earlier day.");
+  return tx(async (t) => {
+    const p = await loadProject(t, input.projectId);
+    let created = 0;
+    const skipped: string[] = [];
+    for (const userId of [...new Set(input.userIds)]) {
+      const w = await t.worker.findUnique({ where: { userId }, include: { user: { select: { name: true } } } });
+      assert(w && w.active, "Pick active employees with a field login.");
+      const dup = await t.workOrderRequest.findFirst({ where: { userId, projectId: p.id, date: input.date, doneAt: null, cancelledAt: null } });
+      if (dup) { skipped.push(w.name); continue; }
+      const r = await t.workOrderRequest.create({ data: { userId, projectId: p.id, date: input.date, note: input.note ?? null, requestedById: actor.id } });
+      await notifyUsers(t, [userId], { type: "workorder.request", title: `Work order needed: ${p.number} ${p.name}`, body: `Office asked for your work order for ${shortDay(input.date)}.${input.note ? ` ${input.note}` : ""}`, link: `/field/request/${r.id}`, projectId: p.id }, actor.id);
+      await audit(t, actor, { action: "workorder.request", entityType: "WorkOrderRequest", entityId: r.id, projectId: p.id, summary: `Asked ${w.name} for the ${p.number} work order for ${shortDay(input.date)}` });
+      created++;
+    }
+    return { created, skipped };
+  });
+}
+
+export async function cancelWorkOrderRequest(actor: Actor, id: string) {
+  requirePerm(actor, "labour.schedule");
+  return tx(async (t) => {
+    const r = await t.workOrderRequest.findUnique({ where: { id }, include: { project: true } });
+    if (!r) throw new NotFoundError("Request");
+    assert(!r.doneAt, "Already done.");
+    if (r.cancelledAt) return;
+    await t.workOrderRequest.update({ where: { id }, data: { cancelledAt: new Date() } });
+    await notifyUsers(t, [r.userId], { type: "workorder.request", title: `No longer needed: ${r.project.number} work order (${shortDay(r.date)})`, link: "/field", projectId: r.projectId }, actor.id);
+    await audit(t, actor, { action: "workorder.request.cancel", entityType: "WorkOrderRequest", entityId: id, projectId: r.projectId, summary: `Cancelled work order request for ${shortDay(r.date)}` });
+  });
+}
+
+/** Field: work orders the office is waiting on from me. */
+export async function myWorkOrderRequests(userId: string) {
+  return prisma.workOrderRequest.findMany({ where: { userId, doneAt: null, cancelledAt: null }, orderBy: { date: "asc" }, include: { project: { select: { id: true, number: true, name: true, location: true } } } });
+}
+
+/** Field: one request, only my own and still open. */
+export async function myWorkOrderRequest(actor: Actor, id: string) {
+  requirePerm(actor, "field.use");
+  const r = await prisma.workOrderRequest.findUnique({ where: { id }, include: { project: { select: { id: true, number: true, name: true, location: true } } } });
+  if (!r || r.userId !== actor.id) throw new NotFoundError("Request");
+  return r;
+}
+
+/** Office: open requests, plus ones answered or cancelled in the last 14 days. */
+export async function officeWorkOrderRequests(actor: Actor) {
+  requirePerm(actor, "jobs.view");
+  const since = addDays(today(), -14);
+  const list = await prisma.workOrderRequest.findMany({
+    where: { OR: [{ doneAt: null, cancelledAt: null }, { doneAt: { gte: since } }] },
+    orderBy: [{ doneAt: { sort: "desc", nulls: "first" } }, { date: "desc" }], take: 200,
+    include: { project: { select: { id: true, number: true, name: true } } },
+  });
+  const users = await prisma.user.findMany({ where: { id: { in: [...new Set(list.flatMap((r) => [r.userId, r.requestedById]))] } }, select: { id: true, name: true } });
+  const name = new Map(users.map((u) => [u.id, u.name]));
+  return list.map((r) => ({ ...r, who: name.get(r.userId) ?? "Unknown", by: name.get(r.requestedById) ?? "Office" }));
+}
+
 /** Add a note to a submitted work order. The original stays as submitted; the office is notified. */
 export async function addWorkOrderNote(actor: Actor, signoffId: string, text: string) {
   requirePerm(actor, "field.use");
@@ -804,6 +878,8 @@ export const signoffSchema = z.object({
   parkingAmount: z.preprocess(money, z.number({ invalid_type_error: "Parking amount must be a number" }).min(0).max(10000).optional()),
   customerName: zOptText(200),
   signatureDataUrl: zOptText(2_000_000),
+  /// filling in a work order the office asked for
+  requestId: zOptId,
 });
 
 /** Complete work order (optional) + customer signature (optional). */
@@ -823,7 +899,9 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
   }
   return tx(async (t) => {
     const p = await loadProject(t, projectId);
-    const s = await t.workOrderSignoff.create({ data: { projectId, completedById: actor.id, workSummary: input.workSummary, markedComplete: input.markedComplete, jobStatus: input.jobStatus ?? (input.markedComplete ? "COMPLETE" : null), coWorkerIds: input.coWorkerIds ?? [], materialsUsed: input.materialsUsed?.length ? input.materialsUsed : undefined, parkingAmount: input.parkingAmount, customerName: input.customerName, signedAt: sigFile ? new Date() : null } });
+    const req = input.requestId ? await t.workOrderRequest.findUnique({ where: { id: input.requestId } }) : null;
+    if (input.requestId) assert(req && req.userId === actor.id && req.projectId === projectId && !req.doneAt && !req.cancelledAt, "That request is already done or was cancelled.");
+    const s = await t.workOrderSignoff.create({ data: { projectId, completedById: actor.id, forDate: req?.date ?? null, workSummary: input.workSummary, markedComplete: input.markedComplete, jobStatus: input.jobStatus ?? (input.markedComplete ? "COMPLETE" : null), coWorkerIds: input.coWorkerIds ?? [], materialsUsed: input.materialsUsed?.length ? input.materialsUsed : undefined, parkingAmount: input.parkingAmount, customerName: input.customerName, signedAt: sigFile ? new Date() : null } });
     if (parkingReceipt) {
       const up = await uploadDocument(actor, { projectId, module: "FIELD", category: "Parking receipt", title: `${p.number} parking receipt${input.parkingAmount != null ? ` $${input.parkingAmount.toFixed(2)}` : ""}`, entityType: "WorkOrderSignoff", entityId: s.id, approvalStatus: "APPROVED" }, parkingReceipt, t);
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { parkingReceiptDocId: up.documentId } });
@@ -834,8 +912,17 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
     }
     await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.jobStatus ? JOB_STATUSES[input.jobStatus].toLowerCase() : input.markedComplete ? "completed" : "visit recorded"}${input.parkingAmount ? `, parking $${input.parkingAmount.toFixed(2)}` : ""}${sigFile ? `, signed by ${input.customerName}` : ""}` });
     const sn = { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: `${actor.name}: ${input.workSummary.slice(0, 200)}`, link: `/work-orders/${s.id}`, projectId };
-    if (!p.projectManagerId) await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], sn, actor.id);
-    else await notifyUsers(t, [p.projectManagerId], sn, actor.id);
+    if (req) {
+      await t.workOrderRequest.update({ where: { id: req.id }, data: { doneAt: new Date(), signoffId: s.id } });
+      sn.title = `${p.number}: requested work order in (${shortDay(req.date)})`;
+      const to = [...new Set([req.requestedById, ...(p.projectManagerId ? [p.projectManagerId] : [])])];
+      await notifyUsers(t, to, sn, actor.id);
+    } else {
+      // a work order filed the normal way also answers any open request for this job up to today
+      await t.workOrderRequest.updateMany({ where: { userId: actor.id, projectId, doneAt: null, cancelledAt: null, date: { lte: today() } }, data: { doneAt: new Date(), signoffId: s.id } });
+      if (!p.projectManagerId) await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], sn, actor.id);
+      else await notifyUsers(t, [p.projectManagerId], sn, actor.id);
+    }
     return s;
   });
 }

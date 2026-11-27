@@ -3,18 +3,26 @@ import { ChevronRight } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/dates";
 import { Badge, Empty } from "@/components/ui";
-import { JOB_STATUSES, myWorkOrders } from "@/services/labour";
+import { JOB_STATUSES, myWorkOrderRequests, myWorkOrders } from "@/services/labour";
 
 /** Field app: the work orders this person submitted. Only their own. */
 export default async function MyWorkOrders() {
   const user = await requireUser("field.use");
-  const list = await myWorkOrders(user);
+  const [list, requests] = await Promise.all([myWorkOrders(user), myWorkOrderRequests(user.id)]);
   return (
     <div className="mx-auto max-w-lg space-y-4">
       <div>
         <h1 className="text-xl font-semibold">My Work Orders</h1>
         <p className="text-sm text-slate-500">What you submitted. Tap one to add a note.</p>
       </div>
+      {requests.length ? (
+        <ul className="space-y-2">{requests.map((r) => (
+          <li key={r.id}><Link href={`/field/request/${r.id}`} className="card flex items-center gap-3 border-amber-300 bg-amber-50 p-4">
+            <div className="min-w-0 flex-1"><div className="text-xs font-semibold text-amber-800">Office needs this · {r.date.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}</div><div className="truncate font-semibold">{r.project.number} {r.project.name}</div></div>
+            <ChevronRight className="h-5 w-5 text-amber-600" />
+          </Link></li>
+        ))}</ul>
+      ) : null}
       {list.length === 0 ? <Empty>None yet.</Empty> : (
         <ul className="space-y-2">{list.map((s) => (
           <li key={s.id}>

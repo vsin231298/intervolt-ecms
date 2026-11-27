@@ -140,3 +140,33 @@ describe("messages", () => {
     expect(g.id).not.toBe(c.id);
   });
 });
+
+describe("work order requested by office", () => {
+  it("office asks → worker alerted and can file it without being scheduled → office sees it received", async () => {
+    const t0 = today();
+    const other = await projects.createDirectJob(pm, { jobType: "SMALL_JOB", name: "Lakeview Plaza", location: "9 Lake Rd", contractValue: 5000, clientPoNumber: "PO-9", projectManagerId: pm.id });
+    await expect(labour.completeWorkOrder(andy, other.id, labour.signoffSchema.parse({ workSummary: "Pulled wire" }))).rejects.toThrow(/not assigned/);
+    await expect(labour.requestWorkOrders(jordan, { userIds: [andy.id], projectId: other.id, date: t0 })).rejects.toThrow();
+    await expect(labour.requestWorkOrders(pm, { userIds: [andy.id], projectId: other.id, date: addDays(t0, 1) })).rejects.toThrow(/earlier day/);
+    const r = await labour.requestWorkOrders(pm, { userIds: [andy.id, jordan.id], projectId: other.id, date: addDays(t0, -1), note: "Need materials" });
+    expect(r.created).toBe(2);
+    expect((await labour.requestWorkOrders(pm, { userIds: [andy.id], projectId: other.id, date: addDays(t0, -1) })).skipped).toEqual(["Andy Morales"]);
+    const n = await prisma.notification.findFirstOrThrow({ where: { userId: andy.id, type: "workorder.request" } });
+    expect(n.title).toMatch(/^Work order needed: .*Lakeview Plaza/);
+    expect(n.body).toMatch(/Need materials/);
+    const [req] = await labour.myWorkOrderRequests(andy.id);
+    expect(req.projectId).toBe(other.id);
+    await expect(labour.myWorkOrderRequest(jordan, req.id)).rejects.toThrow();
+    const so = await labour.completeWorkOrder(andy, other.id, labour.signoffSchema.parse({ workSummary: "Pulled wire to unit 4", jobStatus: "COMPLETE", requestId: req.id }));
+    expect(so.forDate?.getTime()).toBe(addDays(t0, -1).getTime());
+    expect(await labour.myWorkOrderRequests(andy.id)).toHaveLength(0);
+    expect((await prisma.notification.findFirstOrThrow({ where: { userId: pm.id, type: "workorder.signoff" }, orderBy: { createdAt: "desc" } })).title).toMatch(/requested work order in/);
+    const office = await labour.officeWorkOrderRequests(pm);
+    expect(office.find((x) => x.id === req.id)?.signoffId).toBe(so.id);
+    // office cancels Jordan's; he's told and can't open the job any more
+    const jr = office.find((x) => x.who === "Jordan Silva")!;
+    await labour.cancelWorkOrderRequest(pm, jr.id);
+    expect(await labour.myWorkOrderRequests(jordan.id)).toHaveLength(0);
+    await expect(labour.assertFieldAccess(jordan, other.id)).rejects.toThrow();
+  });
+});

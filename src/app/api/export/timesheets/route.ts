@@ -8,7 +8,7 @@ import { fileResponse, toXlsx } from "@/lib/exporting";
 export async function GET(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (!can(user.role, "time.manage") && !can(user.role, "time.submit")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!can(user.role, "time.manage") && !can(user.role, "time.submit") && !can(user.role, "time.view")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const sp = new URL(req.url).searchParams;
   const from = parseDate(sp.get("from") ?? "") ?? addDays(today(), -13);
   const to = parseDate(sp.get("to") ?? "") ?? today();

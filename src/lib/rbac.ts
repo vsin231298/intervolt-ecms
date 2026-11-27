@@ -26,6 +26,7 @@ export const PERMISSIONS = [
   "labour.schedule",
   "time.submit", // site supervisor submits for crew
   "time.manage", // edit / delete / approve any entry
+  "time.view", // see everyone's hours (read-only)
   "field.use", // field app (clock in/out, photos, usage)
   "dailyreport.submit",
   "rfi.create",
@@ -84,7 +85,7 @@ const MATRIX: Record<Role, Set<Permission>> = {
   // Office admin: sees the office side, invoices Ready-to-bill work in QuickBooks and marks them billed.
   OFFICE_ADMIN: new Set<Permission>([
     "jobs.view", "financials.view", "billing.edit", "documents.view", "documents.upload", "company.documents",
-    "directory.edit", "calendar.edit", "reports.view",
+    "directory.edit", "calendar.edit", "reports.view", "time.view",
   ]),
   SITE_SUPERVISOR: new Set<Permission>([
     "jobs.view", "labour.schedule", "time.submit", "dailyreport.submit", "rfi.create", "procurement.receive",

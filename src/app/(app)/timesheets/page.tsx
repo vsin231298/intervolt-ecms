@@ -10,19 +10,31 @@ import { TimeEntries } from "@/components/TimeEntries";
 import { addTimeAction, officeClockOutAction } from "@/app/actions/labour";
 import { crewFlags } from "@/services/labour";
 import Link from "next/link";
-import { fmtDateTime } from "@/lib/dates";
+import { fmtDate, fmtDateTime } from "@/lib/dates";
 
-export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string; worker?: string; job?: string; filter?: string }> }) {
+export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ week?: string; from?: string; to?: string; worker?: string; job?: string; filter?: string }> }) {
   const user = await requireUser();
   const r = user.role;
-  if (!can(r, "time.manage") && !can(r, "time.submit")) {
+  if (!can(r, "time.manage") && !can(r, "time.submit") && !can(r, "time.view")) {
     const { redirect } = await import("next/navigation");
     redirect("/forbidden");
   }
   const sp = await searchParams;
   const t0 = today();
-  const from = parseDate(sp.from ?? "") ?? addDays(t0, -13);
-  const to = parseDate(sp.to ?? "") ?? t0;
+  // Week picker (Mon–Sun). Default is this week unless a custom From/To is given.
+  const monday = (dt: Date) => addDays(dt, -((dt.getUTCDay() + 6) % 7));
+  const thisWeek = monday(t0);
+  const pf = parseDate(sp.from ?? ""), pt = parseDate(sp.to ?? "");
+  // A From/To that is exactly one Mon–Sun week stays in week mode.
+  const isWeek = !!pf && !!pt && pf.getUTCDay() === 1 && isoDate(addDays(pf, 6)) === isoDate(pt);
+  const custom = !sp.week && !!(sp.from || sp.to) && !isWeek;
+  const weekStart = custom ? null : monday(parseDate(sp.week ?? "") ?? (isWeek ? pf! : t0));
+  const from = weekStart ?? parseDate(sp.from ?? "") ?? addDays(t0, -13);
+  const to = weekStart ? addDays(weekStart, 6) : parseDate(sp.to ?? "") ?? t0;
+  const wk = weekStart ?? thisWeek;
+  const qs = (o: Record<string, string | undefined>) => "/timesheets?" + new URLSearchParams(Object.entries(o).filter(([, v]) => v) as [string, string][]).toString();
+  const weekHref = (w: Date) => qs({ week: isoDate(w), worker: sp.worker, job: sp.job, filter: sp.filter });
+  const short = (dt: Date) => dt.toLocaleDateString("en-CA", { month: "short", day: "numeric", timeZone: "UTC" });
   const pendingOnly = sp.filter === "pending";
   const [entries, workers, jobs, openClocks] = await Promise.all([
     prisma.timeEntry.findMany({
@@ -39,11 +51,22 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
   const showCost = can(r, "financials.view");
   const canManage = can(r, "time.manage");
   const reg = sum(entries.map((e) => e.regularHours));
+  // Weekly hours per person
+  const days = weekStart ? [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(weekStart, i)) : [];
+  const byWorker = new Map<string, { id: string; name: string; reg: number; ot: number; day: number[] }>();
+  for (const e of entries) {
+    const w = byWorker.get(e.workerId) ?? { id: e.workerId, name: e.worker.name, reg: 0, ot: 0, day: days.map(() => 0) };
+    w.reg += Number(e.regularHours); w.ot += Number(e.overtimeHours);
+    const i = days.findIndex((d) => isoDate(d) === isoDate(e.date));
+    if (i >= 0) w.day[i] += Number(e.regularHours) + Number(e.overtimeHours);
+    byWorker.set(e.workerId, w);
+  }
+  const people = [...byWorker.values()].sort((a, b) => a.name.localeCompare(b.name));
   const ot = sum(entries.map((e) => e.overtimeHours));
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Timesheets" subtitle="All time entries. Management can add missed entries, edit or delete with a reason, and approve. Every change is audited." actions={
+      <PageHeader title="Timesheets" subtitle={canManage ? "All time entries. Management can add missed entries, edit or delete with a reason, and approve. Every change is audited." : "Everyone's hours, week by week. View only."} actions={canManage ? (
         <Drawer label="Add missed entry" className="btn btn-primary" wide>
           <ActionForm action={addTimeAction} className="grid gap-3 sm:grid-cols-3">
             <Field label="Job *" className="sm:col-span-3"><select name="projectId" required className="input"><Options items={jobs.filter((j) => j.stage !== "CLOSED").map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} empty="Choose…" /></select></Field>
@@ -56,7 +79,15 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
             <div className="sm:col-span-3"><Submit>Add entry</Submit></div>
           </ActionForm>
         </Drawer>
-      } />
+      ) : undefined} />
+
+      <div className="card flex flex-wrap items-center gap-2 p-3">
+        <Link className="btn btn-secondary px-4 py-2 text-lg" href={weekHref(addDays(wk, -7))} aria-label="Previous week">‹</Link>
+        <Link className={"btn px-4 py-2 " + (weekStart ? "btn-primary" : "btn-secondary")} href={weekHref(wk)}>{short(wk)} – {short(addDays(wk, 6))}</Link>
+        <Link className="btn btn-secondary px-4 py-2 text-lg" href={weekHref(addDays(wk, 7))} aria-label="Next week">›</Link>
+        {isoDate(wk) !== isoDate(thisWeek) || !weekStart ? <Link className="btn btn-ghost btn-sm" href={weekHref(thisWeek)}>This week</Link> : null}
+        {!weekStart ? <span className="ml-auto text-sm text-slate-600">Custom dates: {fmtDate(from)} – {fmtDate(to)}</span> : null}
+      </div>
 
       <form className="card flex flex-wrap items-end gap-3 p-4">
         <Field label="From"><input type="date" name="from" defaultValue={isoDate(from)} className="input" /></Field>
@@ -74,6 +105,27 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
         <Stat label="Overtime hours" value={qty(ot)} />
         {showCost ? <Stat label="Labour cost" value={money(sum(entries.map((e) => e.cost)))} /> : <Stat label="Pending approval" value={entries.filter((e) => !e.approvedAt).length} />}
       </div>
+
+      <Card title={weekStart ? `Weekly hours: ${short(wk)} – ${short(addDays(wk, 6))}` : "Hours by employee"}>
+        {people.length === 0 ? <Empty>No hours for this {weekStart ? "week" : "selection"}.</Empty> : (
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead><tr><th>Employee</th>{days.map((d) => <th key={d.toISOString()} className="num">{d.toLocaleDateString("en-CA", { weekday: "short", day: "numeric", timeZone: "UTC" })}</th>)}<th className="num">Regular</th><th className="num">OT</th><th className="num">Total</th></tr></thead>
+              <tbody>
+                {people.map((w) => (
+                  <tr key={w.id}>
+                    <td><Link className="link font-medium" href={qs({ week: weekStart ? isoDate(weekStart) : undefined, from: weekStart ? undefined : isoDate(from), to: weekStart ? undefined : isoDate(to), worker: w.id })}>{w.name}</Link></td>
+                    {w.day.map((h, i) => <td key={i} className="num text-slate-600">{h ? qty(h) : "–"}</td>)}
+                    <td className="num">{qty(w.reg)}</td><td className="num">{qty(w.ot)}</td><td className="num font-semibold">{qty(w.reg + w.ot)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {people.length > 1 ? <tfoot><tr className="font-semibold"><td>Total</td>{days.map((_, i) => <td key={i} className="num">{qty(sum(people.map((w) => w.day[i])))}</td>)}<td className="num">{qty(reg)}</td><td className="num">{qty(ot)}</td><td className="num">{qty(Number(reg) + Number(ot))}</td></tr></tfoot> : null}
+            </table>
+          </div>
+        )}
+        {sp.worker ? <p className="mt-2 text-sm"><Link className="link" href={qs({ week: weekStart ? isoDate(weekStart) : undefined, from: weekStart ? undefined : isoDate(from), to: weekStart ? undefined : isoDate(to) })}>Show everyone</Link></p> : null}
+      </Card>
 
       {flags.length ? (
         <Card title={`Service call crews to check (${flags.length})`}>

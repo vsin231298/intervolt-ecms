@@ -31,7 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   add(can(r, "jobs.view") || can(r, "procurement.edit"), { href: "/procurement", label: "Procurement", icon: "ShoppingCart", section: "Work" });
   add(office, { href: "/calendar", label: "Calendar", icon: "CalendarDays", section: "People & Time" });
   add(can(r, "labour.schedule") || can(r, "jobs.view"), { href: "/schedule", label: "Employee Schedule", icon: "Users", section: "People & Time" });
-  add(can(r, "time.manage") || can(r, "time.submit"), { href: "/timesheets", label: "Timesheets", icon: "Clock", section: "People & Time" });
+  add(can(r, "time.manage") || can(r, "time.submit") || can(r, "time.view"), { href: "/timesheets", label: "Timesheets", icon: "Clock", section: "People & Time" });
   add(can(r, "workers.edit") || can(r, "jobs.view"), { href: "/people", label: "Employees", icon: "HardHat", section: "People & Time" });
   // Office: what the guys sent in.
   add(office && can(r, "jobs.view"), { href: "/work-orders", label: "Work Orders", icon: "ClipboardList", section: "People & Time", badge: woReview || undefined });

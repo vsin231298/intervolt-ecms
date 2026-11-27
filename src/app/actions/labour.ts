@@ -15,8 +15,9 @@ export async function saveWorkerAction(_p: ActionState, fd: FormData) {
 }
 export async function scheduleWorkersAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
-    const res = await labour.scheduleWorkers(actor, str(d.projectId), labour.assignmentSchema.parse({ ...d, workerIds: d.workerIds ?? [], includeWeekends: zBool.parse(d.includeWeekends ?? "") }));
-    return res.warnings.length ? `${res.created} worker-day(s) scheduled. Note: ${res.warnings.slice(0, 5).join("; ")}${res.warnings.length > 5 ? "…" : ""}` : `${res.created} worker-day(s) scheduled.`;
+    const res = await labour.scheduleWorkers(actor, str(d.projectId), labour.assignmentSchema.parse({ ...d, workerIds: d.workerIds ?? [], includeWeekends: zBool.parse(d.includeWeekends ?? ""), publish: zBool.parse(d.publish ?? "") }));
+    const pub = res.published ? " Published." : " Draft: publish from Employee Schedule.";
+    return res.warnings.length ? `${res.created} worker-day(s) scheduled.${pub} Note: ${res.warnings.slice(0, 5).join("; ")}${res.warnings.length > 5 ? "…" : ""}` : `${res.created} worker-day(s) scheduled.${pub}`;
   });
 }
 export async function updateAssignmentAction(_p: ActionState, fd: FormData) {

@@ -210,7 +210,7 @@ describe("Scenario 3: full project lifecycle, tender to closeout", () => {
   it("labour: schedule, field clock in/out, time entries, estimated vs actual", async () => {
     worker = await labour.saveWorker(pm, null, { name: "Eddie Electrician", trade: "Journeyperson 309A", regularRate: 52, overtimeRate: 78, userId: elec.id, active: true });
     const w2 = await labour.saveWorker(pm, null, { name: "Andy Apprentice", trade: "Apprentice", regularRate: 30, overtimeRate: 45, active: true });
-    const res = await labour.scheduleWorkers(sup, projectId, { workerIds: [worker.id, w2.id], fromDate: today(), toDate: today(), hours: 8, includeWeekends: true });
+    const res = await labour.scheduleWorkers(sup, projectId, { workerIds: [worker.id, w2.id], fromDate: today(), toDate: today(), hours: 8, includeWeekends: true, publish: true });
     expect(res.created).toBe(2);
     const { jobs } = await labour.assignedJobs(elec);
     expect(jobs.map((j) => j.project.id)).toContain(projectId);
@@ -375,7 +375,7 @@ describe("Scenario 4: service work order from the field", () => {
     // electrician not assigned → cannot see / clock in
     await expect(labour.clockIn(elec, job.id)).rejects.toThrow(/not assigned/);
     const w = await prisma.worker.findFirstOrThrow({ where: { userId: elec.id } });
-    await labour.scheduleWorkers(pm, job.id, { workerIds: [w.id], fromDate: today(), toDate: today(), hours: 2, includeWeekends: true });
+    await labour.scheduleWorkers(pm, job.id, { workerIds: [w.id], fromDate: today(), toDate: today(), hours: 2, includeWeekends: true, publish: true });
     // per-job range override: 200 m
     await projects.setSiteLocation(pm, job.id, { lat: 43.7, lng: -79.4 }, 200);
     await labour.clockIn(elec, job.id, { lat: 43.7015, lng: -79.4 }); // ~167 m

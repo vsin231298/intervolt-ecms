@@ -45,17 +45,35 @@ export async function saveWorker(actor: Actor, id: string | null, input: z.infer
 
 // ─────────────── Scheduling ───────────────
 
+const hhmm = z.preprocess((v) => (v === "" || v == null ? undefined : v), z.string().regex(/^\d{1,2}:\d{2}$/, "Enter a time like 07:30").optional());
 export const assignmentSchema = z.object({
   workerIds: z.array(z.string()).min(1, "Choose at least one worker"),
   fromDate: zDate,
   toDate: zDate,
   hours: zNonNeg.default(8),
+  startTime: hhmm,
+  endTime: hhmm,
+  breakMin: z.coerce.number().int().min(0).max(480).default(0),
   includeWeekends: z.boolean().default(false),
   notes: zOptText(300),
+  /// publish straight away (field staff see it and get an alert); otherwise it's a draft
+  publish: z.boolean().default(false),
 });
 
+const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+/** Paid hours for a shift with start/end times: end - start - break. */
+export function shiftHours(start: string, end: string, breakMin = 0) {
+  const mins = toMin(end) - toMin(start) - breakMin;
+  if (toMin(end) <= toMin(start)) throw new UserError("End time must be after start time.");
+  if (mins <= 0) throw new UserError("Break is longer than the shift.");
+  return Math.round((mins / 60) * 100) / 100;
+}
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const shortDay = (d: Date) => `${DOW[d.getUTCDay()]} ${d.toLocaleDateString("en-CA", { month: "short", day: "numeric", timeZone: "UTC" })}`;
+
 /** Assign workers to a job for a date range. Returns any double-booking warnings. */
-export async function scheduleWorkers(actor: Actor, projectId: string, input: z.infer<typeof assignmentSchema>) {
+export async function scheduleWorkers(actor: Actor, projectId: string, raw: z.input<typeof assignmentSchema>) {
+  const input = assignmentSchema.parse(raw);
   requirePerm(actor, "labour.schedule");
   if (input.toDate < input.fromDate) throw new UserError("End date is before start date.");
   const days = Math.round((input.toDate.getTime() - input.fromDate.getTime()) / 86_400_000) + 1;
@@ -65,6 +83,9 @@ export async function scheduleWorkers(actor: Actor, projectId: string, input: z.
     assert(["ACTIVATION", "EXECUTION", "CLOSEOUT"].includes(p.stage), "Workers can only be scheduled on active jobs.");
     const warnings: string[] = [];
     let created = 0;
+    if ((input.startTime && !input.endTime) || (!input.startTime && input.endTime)) throw new UserError("Enter both start and end time, or neither.");
+    const hours = input.startTime && input.endTime ? shiftHours(input.startTime, input.endTime, input.breakMin) : input.hours;
+    const times = { startTime: input.startTime ?? null, endTime: input.endTime ?? null, breakMin: input.startTime ? input.breakMin : 0 };
     for (const workerId of input.workerIds) {
       const w = await t.worker.findUnique({ where: { id: workerId } });
       assert(w && w.active, "Choose active workers.");
@@ -74,17 +95,70 @@ export async function scheduleWorkers(actor: Actor, projectId: string, input: z.
         if (!input.includeWeekends && (dow === 0 || dow === 6)) continue;
         const elsewhere = await t.labourAssignment.findFirst({ where: { workerId, date, projectId: { not: projectId } }, include: { project: true } });
         if (elsewhere) warnings.push(`${w.name} is also on ${elsewhere.project.number} on ${date.toISOString().slice(0, 10)}`);
+        const off = await t.timeOff.findFirst({ where: { workerId, status: "APPROVED", startDate: { lte: date }, endDate: { gte: date } } });
+        if (off) warnings.push(`${w.name} has time off on ${date.toISOString().slice(0, 10)}`);
         await t.labourAssignment.upsert({
           where: { workerId_projectId_date: { workerId, projectId, date } },
-          create: { workerId, projectId, date, hours: input.hours, notes: input.notes },
-          update: { hours: input.hours, notes: input.notes },
+          create: { workerId, projectId, date, hours, notes: input.notes, ...times, publishedAt: null },
+          update: { hours, notes: input.notes, ...times, publishedAt: null },
         });
         created++;
       }
-      if (w.userId) await notifyUsers(t, [w.userId], { type: "schedule.assigned", title: `Scheduled on ${p.number} ${p.name}`, body: `${input.fromDate.toISOString().slice(0, 10)} to ${input.toDate.toISOString().slice(0, 10)}`, link: `/field`, projectId }, actor.id);
     }
     await audit(t, actor, { action: "schedule.assign", entityType: "Project", entityId: projectId, projectId, summary: `${p.number}: ${created} worker-day(s) scheduled ${input.fromDate.toISOString().slice(0, 10)} – ${input.toDate.toISOString().slice(0, 10)}` });
-    return { created, warnings };
+    const published = input.publish ? await publishInTx(t, actor, input.fromDate, input.toDate, input.workerIds) : 0;
+    return { created, warnings, published };
+  });
+}
+
+/**
+ * Publish draft shifts in a date range (optionally only some workers). Each worker gets one alert:
+ * "Your schedule for … is out" the first time, "Schedule changed: Tue, Thu" after that.
+ */
+export async function publishSchedule(actor: Actor, from: Date, to: Date, workerIds?: string[]) {
+  requirePerm(actor, "labour.schedule");
+  if (to < from) throw new UserError("End date is before start date.");
+  return tx((t) => publishInTx(t, actor, from, to, workerIds));
+}
+
+async function publishInTx(t: Tx, actor: Actor, from: Date, to: Date, workerIds?: string[]) {
+  const where = { date: { gte: from, lte: to }, publishedAt: null, ...(workerIds?.length ? { workerId: { in: workerIds } } : {}) };
+  const drafts = await t.labourAssignment.findMany({ where, include: { worker: true }, orderBy: { date: "asc" } });
+  if (!drafts.length) return 0;
+  const now = new Date();
+  await t.labourAssignment.updateMany({ where: { id: { in: drafts.map((a) => a.id) } }, data: { publishedAt: now } });
+  const byWorker = new Map<string, typeof drafts>();
+  for (const a of drafts) byWorker.set(a.workerId, [...(byWorker.get(a.workerId) ?? []), a]);
+  const range = `${shortDay(from)} – ${shortDay(to)}`;
+  for (const [workerId, list] of byWorker) {
+    const w = list[0].worker;
+    if (!w.userId) continue;
+    const before = await t.labourAssignment.count({ where: { workerId, date: { gte: from, lte: to }, publishedAt: { lt: now } } });
+    const days = [...new Set(list.map((a) => DOW[a.date.getUTCDay()]))].join(", ");
+    await notifyUsers(t, [w.userId], before
+      ? { type: "schedule.changed", title: `Schedule changed: ${days}`, body: range, link: "/field" }
+      : { type: "schedule.assigned", title: `Your schedule for ${range} is out.`, body: "Tap to see your week.", link: "/field" }, actor.id);
+  }
+  await audit(t, actor, { action: "schedule.publish", entityType: "LabourAssignment", entityId: drafts.map((a) => a.id).join(",").slice(0, 200), summary: `Schedule published ${range}: ${drafts.length} shift(s), ${byWorker.size} employee(s)` });
+  return drafts.length;
+}
+
+/** The next 7 days for a worker: published shifts and approved time off (field "My week"). */
+export async function myWeek(workerId: string, from = today()) {
+  const to = addDays(from, 6);
+  const [shifts, off] = await Promise.all([
+    prisma.labourAssignment.findMany({ where: { workerId, date: { gte: from, lte: to }, publishedAt: { not: null } }, include: { project: { select: { id: true, number: true, name: true, location: true } } }, orderBy: { date: "asc" } }),
+    prisma.timeOff.findMany({ where: { workerId, status: "APPROVED", startDate: { lte: to }, endDate: { gte: from } } }),
+  ]);
+  const crew = shifts.length ? await prisma.labourAssignment.findMany({ where: { projectId: { in: shifts.map((s) => s.projectId) }, date: { gte: from, lte: to }, publishedAt: { not: null }, workerId: { not: workerId } }, include: { worker: { select: { name: true } } } }) : [];
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(from, i);
+    const k = date.getTime();
+    return {
+      date,
+      shifts: shifts.filter((s) => s.date.getTime() === k).map((s) => ({ ...s, with: crew.filter((c) => c.projectId === s.projectId && c.date.getTime() === k).map((c) => c.worker.name.split(" ")[0]) })),
+      off: off.find((o) => o.startDate.getTime() <= k && o.endDate.getTime() >= k) ?? null,
+    };
   });
 }
 
@@ -94,7 +168,7 @@ export async function updateAssignment(actor: Actor, id: string, hours: number, 
     const a = await t.labourAssignment.findUnique({ where: { id }, include: { worker: true } });
     if (!a) throw new NotFoundError("Schedule entry");
     assert(hours > 0 && hours <= 24, "Hours must be between 0 and 24.");
-    await t.labourAssignment.update({ where: { id }, data: { hours, notes } });
+    await t.labourAssignment.update({ where: { id }, data: { hours, notes, startTime: null, endTime: null, breakMin: 0, publishedAt: null } });
     await audit(t, actor, { action: "schedule.update", entityType: "LabourAssignment", entityId: id, projectId: a.projectId, summary: `${a.worker.name} ${a.date.toISOString().slice(0, 10)}: hours ${d(a.hours)} → ${hours}`, before: a, after: { hours, notes } });
   });
 }
@@ -105,6 +179,10 @@ export async function removeAssignment(actor: Actor, id: string) {
     const a = await t.labourAssignment.findUnique({ where: { id }, include: { worker: true } });
     if (!a) throw new NotFoundError("Schedule entry");
     await t.labourAssignment.delete({ where: { id } });
+    if (a.publishedAt && a.worker.userId) {
+      const p = await t.project.findUnique({ where: { id: a.projectId }, select: { number: true, name: true } });
+      await notifyUsers(t, [a.worker.userId], { type: "schedule.changed", title: `Schedule changed: ${shortDay(a.date)}`, body: `Removed from ${p?.number} ${p?.name ?? ""}`.trim(), link: "/field" }, actor.id);
+    }
     await audit(t, actor, { action: "schedule.remove", entityType: "LabourAssignment", entityId: id, projectId: a.projectId, summary: `${a.worker.name} removed from schedule on ${a.date.toISOString().slice(0, 10)}`, before: a });
   });
 }
@@ -189,14 +267,25 @@ export async function assignedJobs(actor: Actor, date = today()) {
   const worker = await workerForUser(actor.id);
   const [assigned, memberOf] = await Promise.all([
     worker
-      ? prisma.labourAssignment.findMany({ where: { workerId: worker.id, date }, include: { project: { include: { client: true } } } })
+      ? prisma.labourAssignment.findMany({ where: { workerId: worker.id, date, publishedAt: { not: null } }, include: { project: { include: { client: true } } } })
       : Promise.resolve([]),
     prisma.projectMember.findMany({ where: { userId: actor.id, project: { stage: { in: ["ACTIVATION", "EXECUTION", "CLOSEOUT"] } } }, include: { project: { include: { client: true } } } }),
   ]);
-  const map = new Map<string, { project: (typeof memberOf)[number]["project"]; today: boolean; hours?: number; notes?: string | null }>();
-  for (const a of assigned) map.set(a.projectId, { project: a.project, today: true, hours: Number(a.hours), notes: a.notes });
+  const map = new Map<string, { project: (typeof memberOf)[number]["project"]; today: boolean; hours?: number; notes?: string | null; startTime?: string | null; endTime?: string | null }>();
+  for (const a of assigned) map.set(a.projectId, { project: a.project, today: true, hours: Number(a.hours), notes: a.notes, startTime: a.startTime, endTime: a.endTime });
   for (const m of memberOf) if (!map.has(m.projectId)) map.set(m.projectId, { project: m.project, today: false });
   return { worker, jobs: [...map.values()].filter((j) => j.project.stage !== "CLOSED") };
+}
+
+/** Viewing a job in the field app: today's jobs, or a published shift in the next 14 days. Returns the next shift date when it isn't today. */
+export async function fieldViewAccess(actor: Actor, projectId: string): Promise<{ today: boolean; next: Date | null }> {
+  if (can(actor.role, "jobs.view")) return { today: true, next: null };
+  const { jobs, worker } = await assignedJobs(actor);
+  if (jobs.some((j) => j.project.id === projectId)) return { today: true, next: null };
+  const t0 = today();
+  const next = worker ? await prisma.labourAssignment.findFirst({ where: { workerId: worker.id, projectId, publishedAt: { not: null }, date: { gt: t0, lte: addDays(t0, 14) } }, orderBy: { date: "asc" } }) : null;
+  if (!next) throw new ForbiddenError("You are not assigned to this job.");
+  return { today: false, next: next.date };
 }
 
 export async function assertFieldAccess(actor: Actor, projectId: string) {

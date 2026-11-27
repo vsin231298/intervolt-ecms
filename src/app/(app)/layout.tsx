@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Bell, Search, LogOut, KeyRound } from "lucide-react";
 import { currentUser } from "@/lib/auth";
 import { can, isFieldOnly, ROLE_LABELS } from "@/lib/rbac";
+import { unreadAnnouncements, unreadConversations } from "@/services/team";
 import { prisma } from "@/lib/db";
 import { Sidebar, type NavItem } from "@/components/Sidebar";
 import { logoutAction } from "@/app/actions/auth";
@@ -11,6 +12,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await currentUser();
   if (!user) redirect("/login");
   const unread = await prisma.notification.count({ where: { userId: user.id, readAt: null } });
+  const [annUnread, msgUnread] = await Promise.all([unreadAnnouncements(user.id), unreadConversations(user.id)]);
   const r = user.role;
   const items: NavItem[] = [];
   const add = (cond: boolean, it: NavItem) => cond && items.push(it);
@@ -26,6 +28,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   add(can(r, "workers.edit") || can(r, "jobs.view"), { href: "/people", label: "Employees", icon: "HardHat", section: "People & Time" });
   add(can(r, "field.use"), { href: "/field", label: "Field App", icon: "Smartphone", section: "People & Time" });
   add(can(r, "field.use"), { href: "/my-work-orders", label: "My Work Orders", icon: "ClipboardList", section: "People & Time" });
+  add(can(r, "field.use"), { href: "/time-off", label: "Time Off", icon: "CalendarX", section: "People & Time" });
+  add(true, { href: "/announcements", label: "Announcements", icon: "Megaphone", section: "People & Time", badge: annUnread || undefined });
+  add(true, { href: "/messages", label: "Messages", icon: "MessageSquare", section: "People & Time", badge: msgUnread || undefined });
   add(can(r, "financials.view"), { href: "/finance", label: "Finance", icon: "Wallet", section: "Company" });
   add(can(r, "documents.view") || can(r, "company.documents"), { href: "/documents", label: "Documents", icon: "FolderOpen", section: "Company" });
   add(can(r, "jobs.view"), { href: "/directory", label: "Clients & Suppliers", icon: "Building2", section: "Company" });

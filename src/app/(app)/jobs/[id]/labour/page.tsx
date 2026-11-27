@@ -66,8 +66,14 @@ export default async function LabourPage({ params }: { params: Promise<{ id: str
               <Field label="To *"><input type="date" name="toDate" required defaultValue={isoDate(t0)} className="input" /></Field>
               <Field label="Hours / day"><input name="hours" defaultValue="8" className="input" /></Field>
             </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Start (optional)"><input type="time" name="startTime" className="input" /></Field>
+              <Field label="End"><input type="time" name="endTime" className="input" /></Field>
+              <Field label="Break (min)"><input type="number" name="breakMin" min={0} step={5} defaultValue={0} className="input" /></Field>
+            </div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="includeWeekends" /> Include weekends</label>
             <Field label="Notes"><input name="notes" className="input" /></Field>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="publish" /> Publish now (they see it and get an alert). Otherwise it stays a draft.</label>
             <Submit>Schedule</Submit>
           </ActionForm>
         </Drawer>
@@ -83,7 +89,7 @@ export default async function LabourPage({ params }: { params: Promise<{ id: str
                     <div className="flex flex-wrap gap-2">
                       {list.map((a) => (
                         <span key={a.id} className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-xs">
-                          {a.worker.name} · {qty(a.hours)}h{a.notes ? ` · ${a.notes}` : ""}
+                          {a.worker.name} · {a.startTime ? `${a.startTime}–${a.endTime} · ` : ""}{qty(a.hours)}h{a.notes ? ` · ${a.notes}` : ""}{a.publishedAt ? "" : " · draft"}
                           {canSchedule ? (
                             <Drawer label="✎" className="text-slate-400 hover:text-brand-600">
                               <ActionForm action={updateAssignmentAction} className="space-y-2" resetOnSuccess={false}>

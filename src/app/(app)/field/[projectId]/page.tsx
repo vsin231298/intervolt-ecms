@@ -8,7 +8,7 @@ import { qty } from "@/lib/money";
 import { Badge, Card, Field, Notice, Options } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { ClockForm, SignaturePad } from "@/components/FieldClient";
-import { JOB_STATUSES, assertFieldAccess, firstClockInToday, needsWorkOrder, workerForUser } from "@/services/labour";
+import { JOB_STATUSES, fieldViewAccess, firstClockInToday, needsWorkOrder, workerForUser } from "@/services/labour";
 import { MaterialRows } from "@/components/MaterialRows";
 import { clockInAction, clockOutAction, fieldUpdateAction, photosAction, signoffAction, takeOverLeadAction } from "@/app/actions/labour";
 import { usageAction } from "@/app/actions/procurement";
@@ -17,8 +17,9 @@ import { getSetting } from "@/lib/settings";
 export default async function FieldJob({ params }: { params: Promise<{ projectId: string }> }) {
   const user = await requireUser("field.use");
   const { projectId } = await params;
+  let access: { today: boolean; next: Date | null };
   try {
-    await assertFieldAccess(user, projectId);
+    access = await fieldViewAccess(user, projectId);
   } catch {
     redirect("/field");
   }
@@ -106,6 +107,7 @@ export default async function FieldJob({ params }: { params: Promise<{ projectId
           )
           : here ? <><div className="mb-2 text-sm">Clocked in since {fmtDateTime(open!.clockInAt)}</div><ClockForm action={clockOutAction} label="Clock out" tone="out" /></>
           : open ? <Notice tone="amber">Clock out of {open.project.number} first. <Link className="link" href={`/field/${open.projectId}`}>Go there</Link></Notice>
+          : !access.today && access.next ? <div><div className="mb-2 text-sm text-slate-500">Scheduled {access.next.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}</div><div className="btn w-full cursor-default bg-slate-200 py-4 text-lg text-slate-500">Clock in opens {access.next.toLocaleDateString("en-CA", { weekday: "short", timeZone: "UTC" })}</div></div>
           : <ClockForm action={clockInAction} projectId={p.id} label="Clock in" tone="in" officeFirst={firstToday} />}
         {worker && geofenceOn ? (
           p.siteLat == null || p.siteLng == null

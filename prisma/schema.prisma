@@ -937,17 +937,100 @@ model Worker {
   clockEntries ClockEntry[]
   documents    Document[]
   usage        MaterialUsage[]
+  timeOff      TimeOff[]
+}
+
+/// Days off: requested from the phone (PENDING) or added by the office (APPROVED).
+model TimeOff {
+  id            String    @id @default(cuid())
+  workerId      String
+  worker        Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  startDate     DateTime  @db.Date
+  endDate       DateTime  @db.Date
+  /// partial day: "09:00"–"12:00" on startDate
+  startTime     String?
+  endTime       String?
+  reason        String?
+  /// PENDING | APPROVED | DECLINED | CANCELLED
+  status        String    @default("PENDING")
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+
+  @@index([workerId, startDate])
+  @@index([status])
+}
+
+model Announcement {
+  id         String                  @id @default(cuid())
+  title      String
+  body       String
+  authorId   String
+  /// how recipients were chosen, e.g. "Everyone", "Field staff", "3 people"
+  audience   String
+  createdAt  DateTime                @default(now())
+  recipients AnnouncementRecipient[]
+}
+
+model AnnouncementRecipient {
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  readAt         DateTime?
+
+  @@id([announcementId, userId])
+  @@index([userId])
+}
+
+model Conversation {
+  id            String               @id @default(cuid())
+  /// set for group chats
+  title         String?
+  createdById   String
+  createdAt     DateTime             @default(now())
+  lastMessageAt DateTime             @default(now())
+  members       ConversationMember[]
+  messages      Message[]
+}
+
+model ConversationMember {
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  lastReadAt     DateTime?
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  body           String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
 }
 
 model LabourAssignment {
-  id        String   @id @default(cuid())
-  workerId  String
-  worker    Worker   @relation(fields: [workerId], references: [id])
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  date      DateTime @db.Date
-  hours     Decimal  @default(8) @db.Decimal(5, 2)
-  notes     String?
+  id          String    @id @default(cuid())
+  workerId    String
+  worker      Worker    @relation(fields: [workerId], references: [id])
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date        DateTime  @db.Date
+  hours       Decimal   @default(8) @db.Decimal(5, 2)
+  notes       String?
+  /// "07:30" / "15:00" (company time); hours = end - start - break when set
+  startTime   String?
+  endTime     String?
+  breakMin    Int       @default(0)
+  /// null = draft (field staff can't see it yet)
+  publishedAt DateTime?
 
   @@unique([workerId, projectId, date])
   @@index([date])
@@ -1381,24 +1464,24 @@ model SupplierInvoiceLine {
 // ───────────────────────── Field (trade) app ─────────────────────────
 
 model ClockEntry {
-  id         String    @id @default(cuid())
-  workerId   String
-  worker     Worker    @relation(fields: [workerId], references: [id])
-  projectId  String
-  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  clockInAt  DateTime
-  clockOutAt DateTime?
-  inLat      Float?
-  inLng      Float?
-  outLat     Float?
-  outLng     Float?
-  notes      String?
+  id           String    @id @default(cuid())
+  workerId     String
+  worker       Worker    @relation(fields: [workerId], references: [id])
+  projectId    String
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  clockInAt    DateTime
+  clockOutAt   DateTime?
+  inLat        Float?
+  inLng        Float?
+  outLat       Float?
+  outLng       Float?
+  notes        String?
   // "Going to office" at clock-out; "Done at office" tapped later
   toOffice     Boolean   @default(false)
   officeDoneAt DateTime?
   officeLat    Float?
   officeLng    Float?
-  createdAt  DateTime  @default(now())
+  createdAt    DateTime  @default(now())
 
   timeEntry TimeEntry?
 
@@ -1422,24 +1505,24 @@ model FieldUpdate {
 
 /// Work order completion with optional customer signature (image stored as a document).
 model WorkOrderSignoff {
-  id             String    @id @default(cuid())
-  projectId      String
-  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  completedById  String
-  workSummary    String
-  markedComplete Boolean   @default(false)
+  id                  String    @id @default(cuid())
+  projectId           String
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  completedById       String
+  workSummary         String
+  markedComplete      Boolean   @default(false)
   /// COMPLETE | RETURN_VISIT | WAITING_PARTS | NEEDS_QUOTE
-  jobStatus      String?
+  jobStatus           String?
   /// Worker ids of co-workers on this visit
-  coWorkerIds    String[]  @default([])
+  coWorkerIds         String[]  @default([])
   /// [{ item, quantity }] used on this visit
-  materialsUsed  Json?
-  parkingAmount  Decimal?  @db.Decimal(10, 2)
+  materialsUsed       Json?
+  parkingAmount       Decimal?  @db.Decimal(10, 2)
   parkingReceiptDocId String?
-  customerName   String?
-  signatureDocId String?
-  signedAt       DateTime?
-  createdAt      DateTime  @default(now())
+  customerName        String?
+  signatureDocId      String?
+  signedAt            DateTime?
+  createdAt           DateTime  @default(now())
 
   notes WorkOrderNote[]
 }

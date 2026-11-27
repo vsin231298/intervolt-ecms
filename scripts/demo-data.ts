@@ -108,7 +108,7 @@ async function main() {
       await proc.approveSupplierInvoice(acct, inv.id);
     }
   }
-  await labour.scheduleWorkers(pm, p.id, { workerIds: [w1.id, w2.id, w3.id], fromDate: addDays(today(), -14), toDate: addDays(today(), 14), hours: 8, includeWeekends: false });
+  await labour.scheduleWorkers(pm, p.id, { workerIds: [w1.id, w2.id, w3.id], fromDate: addDays(today(), -14), toDate: addDays(today(), 14), hours: 8, includeWeekends: false, publish: true });
   for (let i = 14; i >= 1; i--) {
     const day = addDays(today(), -i);
     if ([0, 6].includes(day.getUTCDay())) continue;
@@ -144,7 +144,7 @@ async function main() {
 
   // 3. Service work order and a small job
   const svc = await projects.createDirectJob(pm, { jobType: "SERVICE", name: "Tripping breaker — Unit 402", clientId: c3.id, location: "55 Lake Shore Blvd, Unit 402", siteContactName: "Jane Doe", siteContactPhone: "416-555-0144", clientPoNumber: "LV-SVC-118", projectManagerId: pm.id, startDate: today() });
-  await labour.scheduleWorkers(pm, svc.id, { workerIds: [w1.id], fromDate: today(), toDate: today(), hours: 3, includeWeekends: true });
+  await labour.scheduleWorkers(pm, svc.id, { workerIds: [w1.id], fromDate: today(), toDate: today(), hours: 3, includeWeekends: true, publish: true });
   await projects.createDirectJob(pm, { jobType: "SMALL_JOB", name: "EV charger install — 2 x Level 2", clientId: c3.id, location: "55 Lake Shore Blvd, P1", clientPoNumber: "LV-PO-2290", contractValue: 14800, projectManagerId: pm.id, startDate: addDays(today(), 7), finishDate: addDays(today(), 14) });
 
   await admin.saveEvent(pm, null, { title: "Riverside coordination meeting", startsAt: addDays(new Date(), 1), endsAt: new Date(addDays(new Date(), 1).getTime() + 3600_000), location: "Site trailer", projectId: p.id, attendeeIds: [sup.id, procU.id] });

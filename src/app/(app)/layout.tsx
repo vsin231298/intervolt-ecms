@@ -12,8 +12,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await currentUser();
   if (!user) redirect("/login");
   const unread = await prisma.notification.count({ where: { userId: user.id, readAt: null } });
-  const [annUnread, msgUnread] = await Promise.all([unreadAnnouncements(user.id), unreadConversations(user.id)]);
   const r = user.role;
+  const [annUnread, msgUnread, linkedWorker, pendingOff] = await Promise.all([
+    unreadAnnouncements(user.id),
+    unreadConversations(user.id),
+    prisma.worker.count({ where: { userId: user.id, active: true } }),
+    can(r, "labour.schedule") ? prisma.timeOff.count({ where: { status: "PENDING" } }) : 0,
+  ]);
   const items: NavItem[] = [];
   const add = (cond: boolean, it: NavItem) => cond && items.push(it);
   const office = !isFieldOnly(r);
@@ -26,9 +31,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   add(can(r, "labour.schedule") || can(r, "jobs.view"), { href: "/schedule", label: "Employee Schedule", icon: "Users", section: "People & Time" });
   add(can(r, "time.manage") || can(r, "time.submit"), { href: "/timesheets", label: "Timesheets", icon: "Clock", section: "People & Time" });
   add(can(r, "workers.edit") || can(r, "jobs.view"), { href: "/people", label: "Employees", icon: "HardHat", section: "People & Time" });
-  add(can(r, "field.use"), { href: "/field", label: "Field App", icon: "Smartphone", section: "People & Time" });
-  add(can(r, "field.use"), { href: "/my-work-orders", label: "My Work Orders", icon: "ClipboardList", section: "People & Time" });
-  add(can(r, "field.use"), { href: "/time-off", label: "Time Off", icon: "CalendarX", section: "People & Time" });
+  // Office: what the guys sent in.
+  add(office && can(r, "jobs.view"), { href: "/work-orders", label: "Work Orders", icon: "ClipboardList", section: "People & Time" });
+  add(office && can(r, "labour.schedule"), { href: "/schedule?view=timeoff", label: "Time Off Requests", icon: "CalendarX", section: "People & Time", badge: pendingOff || undefined });
+  // Field: only for people who clock in (field staff, or office staff linked to an employee).
+  const clocksIn = can(r, "field.use") && (!office || linkedWorker > 0);
+  add(clocksIn, { href: "/field", label: "Field App", icon: "Smartphone", section: "People & Time" });
+  add(clocksIn, { href: "/my-work-orders", label: "My Work Orders", icon: "ClipboardList", section: "People & Time" });
+  add(clocksIn, { href: "/time-off", label: office ? "My Time Off" : "Time Off", icon: "CalendarX", section: "People & Time" });
   add(true, { href: "/announcements", label: "Announcements", icon: "Megaphone", section: "People & Time", badge: annUnread || undefined });
   add(true, { href: "/messages", label: "Messages", icon: "MessageSquare", section: "People & Time", badge: msgUnread || undefined });
   add(can(r, "financials.view"), { href: "/finance", label: "Finance", icon: "Wallet", section: "Company" });

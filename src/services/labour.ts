@@ -744,6 +744,36 @@ export async function myWorkOrder(actor: Actor, id: string) {
   return s;
 }
 
+/** Office: every submitted work order, newest first, with who submitted it. */
+export async function allWorkOrders(actor: Actor, f: { userId?: string; status?: string; from?: Date; to?: Date; q?: string } = {}) {
+  requirePerm(actor, "jobs.view");
+  const where: Prisma.WorkOrderSignoffWhereInput = {
+    ...(f.userId ? { completedById: f.userId } : {}),
+    ...(f.status ? { jobStatus: f.status } : {}),
+    ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lt: addDays(f.to, 1) } : {}) } } : {}),
+    ...(f.q ? { OR: [
+      { workSummary: { contains: f.q, mode: "insensitive" } },
+      { customerName: { contains: f.q, mode: "insensitive" } },
+      { project: { number: { contains: f.q, mode: "insensitive" } } },
+      { project: { name: { contains: f.q, mode: "insensitive" } } },
+      { project: { location: { contains: f.q, mode: "insensitive" } } },
+    ] } : {}),
+  };
+  const list = await prisma.workOrderSignoff.findMany({ where, orderBy: { createdAt: "desc" }, take: 300, include: { project: { select: { id: true, number: true, name: true, location: true } }, _count: { select: { notes: true } } } });
+  const users = await prisma.user.findMany({ where: { id: { in: [...new Set(list.map((s) => s.completedById))] } }, select: { id: true, name: true } });
+  const name = new Map(users.map((u) => [u.id, u.name]));
+  return list.map((s) => ({ ...s, submittedBy: name.get(s.completedById) ?? "Unknown" }));
+}
+
+/** Office: one submitted work order. */
+export async function workOrderForOffice(actor: Actor, id: string) {
+  requirePerm(actor, "jobs.view");
+  const s = await prisma.workOrderSignoff.findUnique({ where: { id }, include: { project: { select: { id: true, number: true, name: true, location: true } }, notes: { orderBy: { createdAt: "asc" } } } });
+  if (!s) throw new NotFoundError("Work order");
+  const u = await prisma.user.findUnique({ where: { id: s.completedById }, select: { name: true } });
+  return { ...s, submittedBy: u?.name ?? "Unknown" };
+}
+
 /** Add a note to a submitted work order. The original stays as submitted; the office is notified. */
 export async function addWorkOrderNote(actor: Actor, signoffId: string, text: string) {
   requirePerm(actor, "field.use");
@@ -755,7 +785,7 @@ export async function addWorkOrderNote(actor: Actor, signoffId: string, text: st
     if (!s || s.completedById !== actor.id) throw new NotFoundError("Work order");
     const n = await t.workOrderNote.create({ data: { signoffId, authorId: actor.id, text: body } });
     await audit(t, actor, { action: "workorder.note", entityType: "WorkOrderSignoff", entityId: signoffId, projectId: s.projectId, summary: `${s.project.number}: ${actor.name} added a note to their work order` });
-    const msg = { type: "workorder.signoff", title: `${s.project.number}: note added to work order`, body: `${actor.name}: ${body.slice(0, 200)}`, link: `/jobs/${s.projectId}/site`, projectId: s.projectId };
+    const msg = { type: "workorder.signoff", title: `${s.project.number}: note added to work order`, body: `${actor.name}: ${body.slice(0, 200)}`, link: `/work-orders/${s.id}`, projectId: s.projectId };
     if (s.project.projectManagerId) await notifyUsers(t, [s.project.projectManagerId], msg, actor.id);
     else await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], msg, actor.id);
     return n;
@@ -803,9 +833,9 @@ export async function completeWorkOrder(actor: Actor, projectId: string, input: 
       await t.workOrderSignoff.update({ where: { id: s.id }, data: { signatureDocId: up.documentId } });
     }
     await audit(t, actor, { action: "workorder.signoff", entityType: "WorkOrderSignoff", entityId: s.id, projectId, summary: `${p.number}: work order ${input.jobStatus ? JOB_STATUSES[input.jobStatus].toLowerCase() : input.markedComplete ? "completed" : "visit recorded"}${input.parkingAmount ? `, parking $${input.parkingAmount.toFixed(2)}` : ""}${sigFile ? `, signed by ${input.customerName}` : ""}` });
-    const sn = { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId };
+    const sn = { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: `${actor.name}: ${input.workSummary.slice(0, 200)}`, link: `/work-orders/${s.id}`, projectId };
     if (!p.projectManagerId) await notifyRoles(t, ["ADMIN", "PROJECT_MANAGER"], sn, actor.id);
-    else await notifyUsers(t, [p.projectManagerId], { type: "workorder.signoff", title: `${p.number}: work ${input.markedComplete ? "completed" : "visit report"}`, body: input.workSummary.slice(0, 200), link: `/jobs/${projectId}/site`, projectId }, actor.id);
+    else await notifyUsers(t, [p.projectManagerId], sn, actor.id);
     return s;
   });
 }

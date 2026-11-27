@@ -437,6 +437,11 @@ describe("Scenario 4: service work order from the field", () => {
     expect(again.workSummary).toBe("Replaced outlet");
     expect(again.notes.map((n) => n.text)).toEqual(["Also replaced the cover plate"]);
     await expect(labour.myWorkOrder(pm, mine[0].id)).rejects.toThrow();
+    // office sees everyone's, with who sent it; the field can't
+    const all = await labour.allWorkOrders(pm, { q: "outlet" });
+    expect(all.find((x) => x.id === mine[0].id)?.submittedBy).toBe(elec.name);
+    expect((await labour.workOrderForOffice(pm, mine[0].id)).notes).toHaveLength(1);
+    await expect(labour.allWorkOrders(elec)).rejects.toThrow();
     await labour.clockOut(elec, { lat: 43.64, lng: -79.39, toOffice: true });
     expect((await labour.pendingOfficeDropOff(w.id))?.projectId).toBe(bakery.id);
     await prisma.clockEntry.updateMany({ where: { projectId: bakery.id }, data: { clockOutAt: new Date(Date.now() - 25 * 60_000) } });

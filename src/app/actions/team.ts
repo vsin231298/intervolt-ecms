@@ -14,9 +14,10 @@ const arr = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] 
 /** Office: one shift (or the same shift over several days) for one or more people. */
 export async function createShiftAction(_p: ActionState, fd: FormData) {
   return run(fd, async (actor, d) => {
+    const isNew = str(d.jobMode) === "new";
     const projectId = str(d.projectId);
-    if (!projectId) throw new UserError("Pick a job.");
-    const res = await labour.scheduleWorkers(actor, projectId, {
+    if (!isNew && !projectId) throw new UserError("Pick a job.");
+    const shift = {
       workerIds: arr(d.workerIds),
       fromDate: str(d.date),
       toDate: str(d.toDate) || str(d.date),
@@ -27,8 +28,15 @@ export async function createShiftAction(_p: ActionState, fd: FormData) {
       includeWeekends: true,
       notes: str(d.notes) || undefined,
       publish: zBool.parse(d.publish ?? ""),
-    } as never);
-    const what = res.published ? "Shift saved and published." : "Shift saved as draft. Publish when ready.";
+    } as never;
+    let noPin = false;
+    let res: { warnings: string[]; published: number };
+    if (isNew) {
+      const r = await labour.scheduleNewJob(actor, { customer: str(d.customer), phone: str(d.phone), address: str(d.address), lat: str(d.lat), lng: str(d.lng) }, shift);
+      res = r; noPin = r.project.siteLat == null;
+    } else res = await labour.scheduleWorkers(actor, projectId, shift);
+    let what = res.published ? "Shift saved and published." : "Shift saved as draft. Publish when ready.";
+    if (noPin) what += " Address wasn't picked from the list, so there's no site pin. Set it on the job before they clock in.";
     return res.warnings.length ? `${what} Note: ${res.warnings.slice(0, 4).join("; ")}` : what;
   });
 }

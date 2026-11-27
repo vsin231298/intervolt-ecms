@@ -6,7 +6,7 @@ import { removeAssignmentAction, updateAssignmentAction } from "@/app/actions/la
 type Shift = { id: string; date: Date; projectId: string; startTime: string | null; endTime: string | null; breakMin: number; hours: unknown; notes: string | null; publishedAt: Date | null };
 
 /** Edit any shift, draft or published. Published shifts stay published; the worker gets an alert. */
-export function ShiftEditForm({ a, jobs }: { a: Shift; jobs?: { id: string; number: string; name: string }[] }) {
+export function ShiftEditForm({ a, jobs }: { a: Shift; jobs?: { id: string; number: string; name: string; label?: string }[] }) {
   return (
     <div className="space-y-3">
       <ActionForm action={updateAssignmentAction} className="space-y-3" resetOnSuccess={false}>
@@ -14,7 +14,7 @@ export function ShiftEditForm({ a, jobs }: { a: Shift; jobs?: { id: string; numb
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date"><input type="date" name="date" required defaultValue={isoDate(a.date)} className="input" /></Field>
           {jobs ? (
-            <Field label="Job"><select name="projectId" defaultValue={a.projectId} className="input">{jobs.map((j) => <option key={j.id} value={j.id}>{j.number} {j.name}</option>)}</select></Field>
+            <Field label="Job"><select name="projectId" defaultValue={a.projectId} className="input">{jobs.map((j) => <option key={j.id} value={j.id}>{j.label ?? `${j.number} ${j.name}`}</option>)}</select></Field>
           ) : <div />}
         </div>
         <div className="grid grid-cols-3 gap-3">

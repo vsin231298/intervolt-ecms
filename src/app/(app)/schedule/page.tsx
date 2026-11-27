@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ShiftJobPicker } from "@/components/ShiftJobPicker";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, fmtDate, isoDate, parseDate, today } from "@/lib/dates";
@@ -33,11 +34,16 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
       orderBy: [{ date: "asc" }],
     }),
     prisma.worker.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    prisma.project.findMany({ where: { stage: { in: ["ACTIVATION", "EXECUTION", "CLOSEOUT"] } }, orderBy: { number: "asc" }, select: { id: true, number: true, name: true } }),
+    prisma.project.findMany({ where: { stage: { in: ["ACTIVATION", "EXECUTION", "CLOSEOUT"] }, mergedIntoId: null }, orderBy: { number: "asc" }, select: { id: true, number: true, name: true, location: true, siteContactName: true, client: { select: { name: true } } } }),
     prisma.timeOff.findMany({ where: { status: { in: ["APPROVED", "PENDING"] }, startDate: { lt: end }, endDate: { gte: start } } }),
     prisma.labourAssignment.count({ where: { date: { gte: start, lte: weekEnd }, publishedAt: null } }),
     prisma.timeOff.findMany({ where: { status: "PENDING" }, include: { worker: true }, orderBy: { startDate: "asc" } }),
   ]);
+  // "Client · address" so the office picks by who and where.
+  const jobChoices = jobs.map((j) => {
+    const who = j.client?.name ?? j.siteContactName ?? j.name;
+    return { id: j.id, number: j.number, name: j.name, label: [who, j.location].filter(Boolean).join(" · ") || `${j.number} ${j.name}` };
+  }).sort((a, b) => a.label.localeCompare(b.label));
   const clashFor = async (o: { workerId: string; startDate: Date; endDate: Date }) => prisma.labourAssignment.findMany({ where: { workerId: o.workerId, date: { gte: o.startDate, lte: o.endDate } }, include: { project: { select: { number: true, name: true } } } });
   const pendingWithClash = view === "timeoff" ? await Promise.all(pending.map(async (o) => ({ ...o, clash: await clashFor(o) }))) : [];
   const recentOff = view === "timeoff" ? await prisma.timeOff.findMany({ where: { status: { in: ["APPROVED", "DECLINED"] }, endDate: { gte: addDays(t0, -30) } }, include: { worker: true }, orderBy: { startDate: "asc" }, take: 100 }) : [];
@@ -45,7 +51,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
   const key = (dt: Date) => isoDate(dt);
   const qsBase = (o: Record<string, string | undefined>) => "/schedule?" + new URLSearchParams(Object.entries({ view, from: isoDate(start), worker: sp.worker, job: sp.job, ...o }).filter(([, v]) => v) as [string, string][]).toString();
   const step = view === "date" ? 1 : 7;
-  const editing = canEdit && sp.edit ? await prisma.labourAssignment.findUnique({ where: { id: sp.edit }, include: { worker: true, project: { select: { number: true, name: true } } } }) : null;
+  const editing = canEdit && sp.edit ? await prisma.labourAssignment.findUnique({ where: { id: sp.edit }, include: { worker: true, project: { select: { number: true, name: true, location: true } } } }) : null;
 
   return (
     <div className="space-y-4">
@@ -79,7 +85,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
                 <Field label="End *"><input type="time" name="endTime" required defaultValue="15:30" className="input" /></Field>
                 <Field label="Break (min)"><input name="breakMin" type="number" min={0} step={5} defaultValue={30} className="input" /></Field>
               </div>
-              <Field label="Job (location) *"><select name="projectId" required defaultValue="" className="input"><option value="" disabled>Choose…</option>{jobs.map((j) => <option key={j.id} value={j.id}>{j.number} {j.name}</option>)}</select></Field>
+              <ShiftJobPicker jobs={jobChoices} />
               <div className="label">Employee(s) *</div>
               <div className="grid max-h-48 grid-cols-2 gap-1 overflow-auto rounded border border-slate-200 p-2">{workers.map((w) => <label key={w.id} className="flex items-center gap-1.5 text-sm"><input type="checkbox" name="workerIds[]" value={w.id} /> {w.name}</label>)}</div>
               <Field label="Notes"><input name="notes" className="input" placeholder="e.g. pick up wire at shop first" /></Field>
@@ -91,7 +97,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
       ) : undefined} />
       {editing ? (
         <Card title={`Edit shift · ${editing.worker.name} · ${fmtDate(editing.date)}`} actions={<Link className="btn btn-ghost btn-sm" href={qsBase({ edit: undefined })}>Close</Link>}>
-          <div><ShiftEditForm key={editing.id} a={editing} jobs={jobs.some((j) => j.id === editing.projectId) ? jobs : [{ id: editing.projectId, number: editing.project.number, name: editing.project.name }, ...jobs]} /></div>
+          <div><ShiftEditForm key={editing.id} a={editing} jobs={jobChoices.some((j) => j.id === editing.projectId) ? jobChoices : [{ id: editing.projectId, number: editing.project.number, name: editing.project.name, label: [editing.project.name, editing.project.location].filter(Boolean).join(" · ") }, ...jobChoices]} /></div>
         </Card>
       ) : null}
       <Tabs current={view} items={[

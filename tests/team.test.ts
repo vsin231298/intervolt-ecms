@@ -170,3 +170,18 @@ describe("work order requested by office", () => {
     await expect(labour.assertFieldAccess(jordan, other.id)).rejects.toThrow();
   });
 });
+
+describe("create shift: new job", () => {
+  it("makes a service job with client, address and pin, then schedules on it", async () => {
+    const t0 = addDays(today(), 10);
+    await expect(labour.scheduleNewJob(pm, { customer: "Sam Lee", address: "" }, { workerIds: [wJ], fromDate: t0, toDate: t0, includeWeekends: true })).rejects.toThrow();
+    const r = await labour.scheduleNewJob(pm, { customer: "Sam Lee", phone: "416-555-0199", address: "88 Elm Ave, Toronto, ON", lat: "43.7", lng: "-79.4" }, { workerIds: [wJ, wA], fromDate: t0, toDate: t0, startTime: "08:00", endTime: "16:00", breakMin: 30, includeWeekends: true, publish: true });
+    expect(r.project.number).toMatch(/^WO-/);
+    expect(r.project.location).toBe("88 Elm Ave, Toronto, ON");
+    expect(r.project.siteContactName).toBe("Sam Lee");
+    expect(r.project.siteLat).toBe(43.7);
+    expect(r.published).toBeGreaterThan(0);
+    expect(await prisma.labourAssignment.count({ where: { projectId: r.project.id, date: t0 } })).toBe(2);
+    await expect(labour.scheduleNewJob(jordan, { customer: "X Y", address: "1 Main St" }, { workerIds: [wJ], fromDate: t0, toDate: t0, includeWeekends: true })).rejects.toThrow();
+  });
+});

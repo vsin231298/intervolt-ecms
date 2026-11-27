@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type Props = { name: string; placeholder?: string; near?: { lat: number; lng: number } | null; className?: string; defaultValue?: string };
-type Feature = { properties: { housenumber?: string; street?: string; name?: string; city?: string; town?: string; village?: string; district?: string; state?: string; postcode?: string; countrycode?: string } };
+type Props = { name: string; placeholder?: string; near?: { lat: number; lng: number } | null; className?: string; defaultValue?: string; required?: boolean; latName?: string; lngName?: string };
+type Feature = { geometry?: { coordinates?: [number, number] }; properties: { housenumber?: string; street?: string; name?: string; city?: string; town?: string; village?: string; district?: string; state?: string; postcode?: string; countrycode?: string } };
 
 const PROV: Record<string, string> = { Ontario: "ON", Quebec: "QC", "British Columbia": "BC", Alberta: "AB", Manitoba: "MB", Saskatchewan: "SK", "Nova Scotia": "NS", "New Brunswick": "NB", "Newfoundland and Labrador": "NL", "Prince Edward Island": "PE" };
 
@@ -21,9 +21,10 @@ function label(f: Feature, typed: string) {
  * Address box with suggestions as you type (free OpenStreetMap search via Photon, no key),
  * nearest to the phone first. Free text still works if the address isn't found.
  */
-export function AddressInput({ name, placeholder, near, className = "input", defaultValue }: Props) {
+export function AddressInput({ name, placeholder, near, className = "input", defaultValue, required, latName, lngName }: Props) {
   const [value, setValue] = useState(defaultValue ?? "");
-  const [list, setList] = useState<string[]>([]);
+  const [list, setList] = useState<{ label: string; lat?: number; lng?: number }[]>([]);
+  const [pin, setPin] = useState<{ lat?: number; lng?: number } | null>(null);
   const [open, setOpen] = useState(false);
   const picked = useRef<string | null>(null);
 
@@ -37,7 +38,9 @@ export function AddressInput({ name, placeholder, near, className = "input", def
         const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en${bias}`, { signal: ctl.signal });
         const j = (await r.json()) as { features: Feature[] };
         const seen = new Set<string>();
-        const out = j.features.filter((f) => (f.properties.countrycode ?? "CA") === "CA").map((f) => label(f, q)).filter((s) => s && !seen.has(s) && seen.add(s));
+        const out = j.features.filter((f) => (f.properties.countrycode ?? "CA") === "CA")
+          .map((f) => ({ label: label(f, q), lng: f.geometry?.coordinates?.[0], lat: f.geometry?.coordinates?.[1] }))
+          .filter((s) => s.label && !seen.has(s.label) && seen.add(s.label));
         setList(out.slice(0, 5));
         setOpen(true);
       } catch { /* offline or blocked: plain text box */ }
@@ -47,19 +50,21 @@ export function AddressInput({ name, placeholder, near, className = "input", def
 
   return (
     <div className="relative">
-      <input name={name} value={value} placeholder={placeholder} autoComplete="off" className={className}
-        onChange={(e) => { picked.current = null; setValue(e.target.value); }}
+      <input name={name} value={value} placeholder={placeholder} autoComplete="off" className={className} required={required}
+        onChange={(e) => { picked.current = null; setPin(null); setValue(e.target.value); }}
         onFocus={() => list.length && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
       {open && list.length ? (
         <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-slate-200 bg-white text-sm shadow-lg">
           {list.map((s) => (
-            <li key={s}>
+            <li key={s.label}>
               <button type="button" className="block w-full px-3 py-2.5 text-left hover:bg-slate-50" onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { picked.current = s; setValue(s); setList([]); setOpen(false); }}>{s}</button>
+                onClick={() => { picked.current = s.label; setValue(s.label); setPin({ lat: s.lat, lng: s.lng }); setList([]); setOpen(false); }}>{s.label}</button>
             </li>
           ))}
         </ul>
       ) : null}
+      {latName ? <input type="hidden" name={latName} value={pin?.lat ?? ""} /> : null}
+      {lngName ? <input type="hidden" name={lngName} value={pin?.lng ?? ""} /> : null}
     </div>
   );
 }

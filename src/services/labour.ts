@@ -76,10 +76,45 @@ const shortDay = (d: Date) => `${DOW[d.getUTCDay()]} ${d.toLocaleDateString("en-
 export async function scheduleWorkers(actor: Actor, projectId: string, raw: z.input<typeof assignmentSchema>) {
   const input = assignmentSchema.parse(raw);
   requirePerm(actor, "labour.schedule");
+  return tx((t) => scheduleInTx(t, actor, projectId, input));
+}
+
+export const shiftJobSchema = z.object({
+  customer: zText(200).pipe(z.string().min(2, "Enter the client's name")),
+  phone: zOptText(50),
+  address: zText(300).pipe(z.string().min(5, "Enter the job location")),
+  lat: z.preprocess((v) => (v === "" || v == null ? undefined : Number(v)), z.number().min(-90).max(90).optional()),
+  lng: z.preprocess((v) => (v === "" || v == null ? undefined : Number(v)), z.number().min(-180).max(180).optional()),
+});
+
+/** Create shift → New job: makes the work order (client, address, site pin from the picked address) and schedules on it. */
+export async function scheduleNewJob(actor: Actor, rawJob: z.input<typeof shiftJobSchema>, raw: z.input<typeof assignmentSchema>) {
+  const job = shiftJobSchema.parse(rawJob);
+  const input = assignmentSchema.parse(raw);
+  requirePerm(actor, "labour.schedule");
+  return tx(async (t) => {
+    const number = await nextWorkOrderNumber(t);
+    const p = await t.project.create({
+      data: {
+        number, jobType: "SERVICE", stage: "EXECUTION", awardedAt: new Date(), holdbackPercent: 0,
+        name: job.customer, location: job.address, siteContactName: job.customer, siteContactPhone: job.phone,
+        siteLat: job.lat ?? null, siteLng: job.lng ?? null, description: `Created from the schedule by ${actor.name}.`,
+      },
+    });
+    await t.stageHistory.create({ data: { projectId: p.id, toStage: "EXECUTION", byId: actor.id, note: "Created from Create shift" } });
+    await createFolders(t, p.id, ["Work Order", "Photos", "Procurement", "Billing", "Inspections"]);
+    await createCloseoutItems(t, p.id, "SERVICE");
+    await audit(t, actor, { action: "job.create", entityType: "Project", entityId: p.id, projectId: p.id, summary: `${number} created from the schedule: ${job.customer}, ${job.address}${job.lat == null ? " (no site pin)" : ""}`, after: job });
+    const res = await scheduleInTx(t, actor, p.id, input);
+    return { ...res, project: p };
+  });
+}
+
+async function scheduleInTx(t: Tx, actor: Actor, projectId: string, input: z.infer<typeof assignmentSchema>) {
   if (input.toDate < input.fromDate) throw new UserError("End date is before start date.");
   const days = Math.round((input.toDate.getTime() - input.fromDate.getTime()) / 86_400_000) + 1;
   if (days > 120) throw new UserError("Schedule at most 120 days at a time.");
-  return tx(async (t) => {
+  {
     const p = await loadProject(t, projectId);
     assert(["ACTIVATION", "EXECUTION", "CLOSEOUT"].includes(p.stage), "Workers can only be scheduled on active jobs.");
     const warnings: string[] = [];
@@ -109,7 +144,7 @@ export async function scheduleWorkers(actor: Actor, projectId: string, raw: z.in
     await audit(t, actor, { action: "schedule.assign", entityType: "Project", entityId: projectId, projectId, summary: `${p.number}: ${created} worker-day(s) scheduled ${input.fromDate.toISOString().slice(0, 10)} – ${input.toDate.toISOString().slice(0, 10)}` });
     const published = input.publish ? await publishInTx(t, actor, input.fromDate, input.toDate, input.workerIds) : 0;
     return { created, warnings, published };
-  });
+  }
 }
 
 /**
